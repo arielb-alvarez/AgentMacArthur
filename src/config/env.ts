@@ -19,6 +19,8 @@ const envSchema = z.object({
   OPENAI_MODEL: z
     .string()
     .default("gpt-4.1-mini"),
+
+  AGENT_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
 });
 
 export const env = envSchema.parse(process.env);

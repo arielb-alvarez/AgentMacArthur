@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-// import { generateChatResponse } from "../services/agent.service.js";
-import { generateChatResponse } from "../services/mock-agent.service.js";
+import { getAgentProvider } from "../agent/agent-provider.factory.js";
 
 export const chat = async (
   req: Request,
@@ -17,7 +16,9 @@ export const chat = async (
       });
     }
 
-    const response = await generateChatResponse(message);
+    const agentProvider = getAgentProvider();
+
+    const response = await agentProvider.generateChatResponse(message);
 
     return res.status(200).json({
       success: true,
