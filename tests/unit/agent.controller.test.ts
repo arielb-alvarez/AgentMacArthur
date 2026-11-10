@@ -35,15 +35,19 @@ describe("Agent Controller", () => {
     await controller.chat(req, res, next);
 
     // 7. Verify the results
-    expect(fakeProvider.generateChatResponse).toHaveBeenCalledWith(
-      "Hello AgentMacArthur"
-    );
+    expect(fakeProvider.generateChatResponse).toHaveBeenCalledWith([
+      {
+        role: "user",
+        content: "Hello AgentMacArthur",
+      },
+    ]);
 
     expect(res.status).toHaveBeenCalledWith(200);
 
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       agent: "AgentMacArthur",
+      conversationId: expect.any(String),
       response: "Hello from test provider",
     });
 

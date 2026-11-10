@@ -3,6 +3,7 @@ import type { AgentProvider } from "../agent/agent-provider.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/app.error.js";
 import { logger } from "../utils/logger.js";
+import { ConversationMessage } from "../conversations/conversation.types.js";
 
 const getClient = (): OpenAI => {
   if (!env.OPENAI_API_KEY) {
@@ -15,7 +16,9 @@ const getClient = (): OpenAI => {
 };
 
 export const openAIAgentProvider: AgentProvider = {
-  generateChatResponse: async (message: string): Promise<string> => {
+  generateChatResponse: async (
+    messages: ConversationMessage[]
+  ): Promise<string> => {
     const client = getClient();
 
     try {
@@ -23,7 +26,7 @@ export const openAIAgentProvider: AgentProvider = {
             model: env.OPENAI_MODEL,
             instructions:
             "You are AgentMacArthur, an AI software engineering assistant. You help developers understand, build, debug, and improve software.",
-            input: message,
+            input: messages,
         });
 
         return response.output_text;

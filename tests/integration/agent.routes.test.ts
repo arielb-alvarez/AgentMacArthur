@@ -39,4 +39,30 @@ describe("POST /api/agent/chat", () => {
     expect(response.body.success).toBe(false);
     expect(response.body.message).toBe("Validation failed");
   });
+
+  it("should maintain conversation history across requests", async () => {
+    const firstResponse = await request(app)
+        .post("/api/agent/chat")
+        .send({
+        message: "My name is Alex.",
+        });
+
+    const conversationId = firstResponse.body.conversationId;
+
+    const secondResponse = await request(app)
+        .post("/api/agent/chat")
+        .send({
+        message: "What is my name?",
+        conversationId,
+        });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+
+    expect(secondResponse.body.conversationId).toBe(conversationId);
+
+    expect(secondResponse.body.response).toContain(
+        "Total messages in conversation: 3."
+    );
+  });
 });

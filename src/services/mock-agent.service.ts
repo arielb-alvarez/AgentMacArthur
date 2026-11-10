@@ -1,9 +1,9 @@
 import type { AgentProvider } from "../agent/agent-provider.js";
 
 export const mockAgentProvider: AgentProvider = {
-  generateChatResponse: async (
-    message: string
-  ): Promise<string> => {
-    return `[MOCK RESPONSE] Hello! AgentMacArthur received your message: "${message}". This is a simulated response because the application is currently running in mock mode.`;
+  generateChatResponse: async (messages) => {
+    const latestMessage = messages[messages.length - 1];
+
+    return `[MOCK RESPONSE] AgentMacArthur received your message: "${latestMessage?.content ?? ""}". Total messages in conversation: ${messages.length}.`;
   },
 };

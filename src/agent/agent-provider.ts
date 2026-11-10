@@ -1,3 +1,7 @@
+import type { ConversationMessage } from "../conversations/conversation.types.js";
+
 export interface AgentProvider {
-  generateChatResponse(message: string): Promise<string>;
+  generateChatResponse(
+    messages: ConversationMessage[]
+  ): Promise<string>;
 }

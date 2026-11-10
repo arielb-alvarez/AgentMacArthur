@@ -1,5 +1,7 @@
+
 import { describe, it, expect } from "vitest";
 import { mockAgentProvider } from "../../src/services/mock-agent.service.js";
+import type { ConversationMessage } from "../../src/conversations/conversation.types.js";
 
 describe("mockAgentProvider", () => {
   it.each([
@@ -8,10 +10,17 @@ describe("mockAgentProvider", () => {
     "Testing 123",
     "This is another test message.",
   ])("should return the expected response for: %s", async (message) => {
-    const result = await mockAgentProvider.generateChatResponse(message);
+    const messages: ConversationMessage[] = [
+      {
+        role: "user",
+        content: message,
+      },
+    ];
+
+    const result = await mockAgentProvider.generateChatResponse(messages);
 
     expect(result).toBe(
-      `[MOCK RESPONSE] Hello! AgentMacArthur received your message: "${message}". This is a simulated response because the application is currently running in mock mode.`
+      `[MOCK RESPONSE] AgentMacArthur received your message: "${message}". Total messages in conversation: 1.`
     );
   });
 });
