@@ -1,40 +1,69 @@
-
 import { describe, it, expect, vi } from "vitest";
+
 import { createAgentController } from "../../src/controllers/agent.controller.js";
+
 import type { AgentProvider } from "../../src/agent/agent-provider.js";
+import type { ConversationService } from "../../src/conversations/conversation.service.js";
+import type { Conversation } from "../../src/conversations/conversation.types.js";
 
 describe("Agent Controller", () => {
+  const createMockConversation = (): Conversation => ({
+    id: "test-conversation-id",
+    messages: [
+      {
+        role: "user",
+        content: "Hello AgentMacArthur",
+      },
+    ],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
   it("should return a successful response", async () => {
-    // 1. Create a fake provider
     const fakeProvider: AgentProvider = {
       generateChatResponse: vi.fn().mockResolvedValue(
         "Hello from test provider"
       ),
     };
 
-    // 2. Create the controller using the fake provider
-    const controller = createAgentController(fakeProvider);
+    const mockConversation = createMockConversation();
 
-    // 3. Mock the request
+    const fakeConversationService = {
+      createConversation: vi.fn().mockResolvedValue(mockConversation),
+      getConversation: vi.fn().mockResolvedValue(mockConversation),
+      addMessage: vi.fn().mockResolvedValue(mockConversation),
+    } as unknown as ConversationService;
+
+    const controller = createAgentController(
+      fakeProvider,
+      fakeConversationService
+    );
+
     const req = {
       body: {
         message: "Hello AgentMacArthur",
       },
     } as any;
 
-    // 4. Mock the response
     const res = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
     } as any;
 
-    // 5. Mock the next function
     const next = vi.fn();
 
-    // 6. Execute the controller
     await controller.chat(req, res, next);
 
-    // 7. Verify the results
+    expect(fakeConversationService.createConversation).toHaveBeenCalledOnce();
+
+    expect(fakeConversationService.addMessage).toHaveBeenCalledWith(
+      mockConversation.id,
+      {
+        role: "user",
+        content: "Hello AgentMacArthur",
+      }
+    );
+
     expect(fakeProvider.generateChatResponse).toHaveBeenCalledWith([
       {
         role: "user",
@@ -47,7 +76,7 @@ describe("Agent Controller", () => {
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       agent: "AgentMacArthur",
-      conversationId: expect.any(String),
+      conversationId: mockConversation.id,
       response: "Hello from test provider",
     });
 
@@ -58,20 +87,31 @@ describe("Agent Controller", () => {
     const providerError = new Error("AI provider failed");
 
     const failingProvider: AgentProvider = {
-        generateChatResponse: vi.fn().mockRejectedValue(providerError),
+      generateChatResponse: vi.fn().mockRejectedValue(providerError),
     };
 
-    const controller = createAgentController(failingProvider);
+    const mockConversation = createMockConversation();
+
+    const fakeConversationService = {
+      createConversation: vi.fn().mockResolvedValue(mockConversation),
+      getConversation: vi.fn().mockResolvedValue(mockConversation),
+      addMessage: vi.fn().mockResolvedValue(mockConversation),
+    } as unknown as ConversationService;
+
+    const controller = createAgentController(
+      failingProvider,
+      fakeConversationService
+    );
 
     const req = {
-        body: {
+      body: {
         message: "Hello AgentMacArthur",
-        },
+      },
     } as any;
 
     const res = {
-        status: vi.fn().mockReturnThis(),
-        json: vi.fn().mockReturnThis(),
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
     } as any;
 
     const next = vi.fn();

@@ -1,20 +1,39 @@
+
 import app from "./app.js";
 import { env } from "./config/env.js";
+import { connectDatabase, pool } from "./config/database.js";
+import { logger } from "./utils/logger.js";
 
-const server = app.listen(env.PORT, () => {
-  console.log(
-    `AgentMacArthur running on port ${env.PORT}`
-  );
-});
+const startServer = async (): Promise<void> => {
+  try {
+    await connectDatabase();
 
-const shutdown = (signal: string) => {
-  console.log(`${signal} received. Shutting down...`);
+    const server = app.listen(env.PORT, () => {
+      logger.info(`AgentMacArthur running on port ${env.PORT}`);
+    });
 
-  server.close(() => {
-    console.log("HTTP server closed.");
-    process.exit(0);
-  });
+    const shutdown = async (signal: string): Promise<void> => {
+      logger.info(`${signal} received. Shutting down...`);
+
+      server.close(async () => {
+        try {
+          await pool.end();
+          logger.info("Database connections closed");
+          process.exit(0);
+        } catch (error) {
+          logger.error("Error during database shutdown", error);
+          process.exit(1);
+        }
+      });
+    };
+
+    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    process.on("SIGINT", () => void shutdown("SIGINT"));
+  } catch (error) {
+    logger.error("Failed to start AgentMacArthur", error);
+    await pool.end();
+    process.exit(1);
+  }
 };
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+void startServer();

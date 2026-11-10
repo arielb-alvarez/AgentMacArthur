@@ -1,12 +1,14 @@
-
 import type { Request, Response, NextFunction } from "express";
+
 import type { AgentProvider } from "../agent/agent-provider.js";
-import { conversationService } from "../conversations/conversation.service.js";
+
+import type { ConversationService } from "../conversations/conversation.service.js";
 
 export const createAgentController = (
-  agentProvider: AgentProvider
-) => ({
-  chat: async (
+  agentProvider: AgentProvider,
+  conversationService: ConversationService
+) => {
+  const chat = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -24,7 +26,9 @@ export const createAgentController = (
       let conversation;
 
       if (conversationId) {
-        conversation = conversationService.getConversation(conversationId);
+        conversation = await conversationService.getConversation(
+          conversationId
+        );
 
         if (!conversation) {
           return res.status(404).json({
@@ -33,19 +37,26 @@ export const createAgentController = (
           });
         }
       } else {
-        conversation = conversationService.createConversation();
+        conversation = await conversationService.createConversation();
       }
 
-      conversationService.addMessage(conversation.id, {
+      await conversationService.addMessage(conversation.id, {
         role: "user",
         content: message,
       });
 
+      const updatedConversation =
+        await conversationService.getConversation(conversation.id);
+
+      if (!updatedConversation) {
+        throw new Error("Conversation could not be retrieved.");
+      }
+
       const response = await agentProvider.generateChatResponse(
-        conversation.messages.map((message) => ({ ...message }))
+        updatedConversation.messages.map((item) => ({ ...item }))
       );
 
-      conversationService.addMessage(conversation.id, {
+      await conversationService.addMessage(conversation.id, {
         role: "assistant",
         content: response,
       });
@@ -59,5 +70,7 @@ export const createAgentController = (
     } catch (error) {
       next(error);
     }
-  },
-});
+  };
+
+  return { chat };
+};
