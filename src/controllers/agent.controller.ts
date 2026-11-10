@@ -1,15 +1,30 @@
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
+// import { generateChatResponse } from "../services/agent.service.js";
+import { generateChatResponse } from "../services/mock-agent.service.js";
 
-export const chat = (
+export const chat = async (
   req: Request,
-  res: Response
+  res: Response,
+  next: NextFunction
 ) => {
-  const { message } = req.body;
+  try {
+    const { message } = req.body;
 
-  res.status(200).json({
-    success: true,
-    agent: "AgentMacArthur",
-    receivedMessage: message,
-    response: "Your request has been received.",
-  });
+    if (typeof message !== "string" || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid message is required.",
+      });
+    }
+
+    const response = await generateChatResponse(message);
+
+    return res.status(200).json({
+      success: true,
+      agent: "AgentMacArthur",
+      response,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
