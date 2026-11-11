@@ -1,8 +1,9 @@
 
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { pool as defaultPool } from "../config/database.js";
 
@@ -10,6 +11,11 @@ const MIGRATION_LOCK_ID = 928374;
 
 export interface MigrationRunnerOptions {
   migrationsDirectory?: string;
+}
+
+interface ExecutedMigration {
+  name: string;
+  checksum: string | null;
 }
 
 const getMigrationsDirectory = (
@@ -28,20 +34,64 @@ const getMigrationFiles = async (
     .sort();
 };
 
+const generateChecksum = (content: string): string => {
+  return createHash("sha256")
+    .update(content)
+    .digest("hex");
+};
+
 const getExecutedMigrations = async (
   db: Pool
-): Promise<string[]> => {
-  const result = await db.query<{ name: string }>(
-    `SELECT name FROM schema_migrations ORDER BY id ASC`
+): Promise<ExecutedMigration[]> => {
+  const result = await db.query<ExecutedMigration>(
+    `SELECT name, checksum
+     FROM schema_migrations
+     ORDER BY id ASC`
   );
 
-  return result.rows.map((row) => row.name);
+  return result.rows;
+};
+
+const validateMigrationFiles = (
+  migrationFiles: string[],
+  executedMigrations: ExecutedMigration[]
+): void => {
+  const availableMigrations = new Set(migrationFiles);
+
+  const missingMigrations = executedMigrations
+    .filter(
+      (migration) => !availableMigrations.has(migration.name)
+    )
+    .map((migration) => migration.name);
+
+  if (missingMigrations.length > 0) {
+    throw new Error(
+      "Missing migration files: " +
+      `${missingMigrations.join(", ")}. ` +
+      "An already executed migration file has been deleted."
+    );
+  }
+};
+
+const updateMigrationChecksum = async (
+  db: Pool,
+  migrationName: string,
+  checksum: string
+): Promise<void> => {
+  await db.query(
+    `UPDATE schema_migrations
+     SET checksum = $1
+     WHERE name = $2
+       AND checksum IS NULL`,
+    [checksum, migrationName]
+  );
 };
 
 const executeMigration = async (
   db: Pool,
   migrationName: string,
-  sql: string
+  sql: string,
+  checksum: string
 ): Promise<void> => {
   const client = await db.connect();
 
@@ -51,9 +101,9 @@ const executeMigration = async (
     await client.query(sql);
 
     await client.query(
-      `INSERT INTO schema_migrations (name)
-       VALUES ($1)`,
-      [migrationName]
+      `INSERT INTO schema_migrations (name, checksum)
+       VALUES ($1, $2)`,
+      [migrationName, checksum]
     );
 
     await client.query("COMMIT");
@@ -66,7 +116,7 @@ const executeMigration = async (
 };
 
 const acquireMigrationLock = async (
-  client: import("pg").PoolClient
+  client: PoolClient
 ): Promise<void> => {
   await client.query(
     "SELECT pg_advisory_lock($1)",
@@ -75,7 +125,7 @@ const acquireMigrationLock = async (
 };
 
 const releaseMigrationLock = async (
-  client: import("pg").PoolClient
+  client: PoolClient
 ): Promise<void> => {
   await client.query(
     "SELECT pg_advisory_unlock($1)",
@@ -90,8 +140,14 @@ export const createMigrationTable = async (
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id SERIAL PRIMARY KEY,
       name VARCHAR(255) NOT NULL UNIQUE,
+      checksum VARCHAR(64),
       executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  await db.query(`
+    ALTER TABLE schema_migrations
+    ADD COLUMN IF NOT EXISTS checksum VARCHAR(64);
   `);
 };
 
@@ -118,25 +174,69 @@ export const runMigrations = async (
     );
 
     const executedMigrations = await getExecutedMigrations(db);
-
-    const pendingMigrations = migrationFiles.filter(
-      (file) => !executedMigrations.includes(file)
+    validateMigrationFiles(
+      migrationFiles,
+      executedMigrations
     );
 
-    for (const migrationFile of pendingMigrations) {
+    let executedCount = 0;
+
+    for (const migrationFile of migrationFiles) {
       const migrationPath = path.join(
         migrationsDirectory,
         migrationFile
       );
 
       const sql = await readFile(migrationPath, "utf-8");
+      const checksum = generateChecksum(sql);
 
-      await executeMigration(db, migrationFile, sql);
+      const executedMigration = executedMigrations.find(
+        (migration) => migration.name === migrationFile
+      );
+
+      if (executedMigration) {
+        if (executedMigration.checksum === null) {
+          await updateMigrationChecksum(
+            db,
+            migrationFile,
+            checksum
+          );
+
+          console.log(
+            `Migration checksum initialized: ${migrationFile}`
+          );
+
+          continue;
+        }
+
+        if (executedMigration.checksum !== checksum) {
+          throw new Error(
+            `Migration checksum mismatch: ${migrationFile}. ` +
+            "An already executed migration has been modified."
+          );
+        }
+
+        continue;
+      }
+
+      await executeMigration(
+        db,
+        migrationFile,
+        sql,
+        checksum
+      );
+
+      executedCount++;
 
       console.log(`Migration executed: ${migrationFile}`);
     }
 
-    if (pendingMigrations.length === 0) {
+    await db.query(`
+      ALTER TABLE schema_migrations
+      ALTER COLUMN checksum SET NOT NULL;
+    `);
+
+    if (executedCount === 0) {
       console.log("Database is already up to date.");
     }
   } finally {
