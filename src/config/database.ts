@@ -1,4 +1,3 @@
-
 import pg from "pg";
 import { env } from "./env.js";
 import { logger } from "../utils/logger.js";

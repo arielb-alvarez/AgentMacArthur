@@ -1,0 +1,5 @@
+CREATE TABLE migration_rollback_test (
+  id SERIAL PRIMARY KEY
+);
+
+INVALID SQL STATEMENT;
