@@ -30,10 +30,6 @@ const sanitize = (
     return value.toISOString();
   }
 
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitize(item, seen));
-  }
-
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) {
       return "[Circular]";
@@ -41,15 +37,23 @@ const sanitize = (
 
     seen.add(value);
 
-    const sanitized: Record<string, unknown> = {};
+    try {
+      if (Array.isArray(value)) {
+        return value.map((item) => sanitize(item, seen));
+      }
 
-    for (const [key, item] of Object.entries(value)) {
-      sanitized[key] = sensitiveKeyPattern.test(key)
-        ? "[REDACTED]"
-        : sanitize(item, seen);
+      const sanitized: Record<string, unknown> = {};
+
+      for (const [key, item] of Object.entries(value)) {
+        sanitized[key] = sensitiveKeyPattern.test(key)
+          ? "[REDACTED]"
+          : sanitize(item, seen);
+      }
+
+      return sanitized;
+    } finally {
+      seen.delete(value);
     }
-
-    return sanitized;
   }
 
   return value;
@@ -73,6 +77,7 @@ const log = (entry: LogEntry): void => {
   }
 
   const level = entry.level.toUpperCase();
+
   const context = entry.context !== undefined
     ? ` ${JSON.stringify(sanitizedEntry.context)}`
     : "";
