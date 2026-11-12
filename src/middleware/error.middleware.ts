@@ -6,13 +6,13 @@ export const errorMiddleware = (
   error: Error,
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ) => {
   logger.error("Request failed", {
+    requestId: res.locals.requestId,
     method: req.method,
-    path: req.path,
+    path: req.originalUrl.split("?")[0],
     errorName: error.name,
-    errorMessage: error.message,
   });
 
   if (error instanceof AppError) {

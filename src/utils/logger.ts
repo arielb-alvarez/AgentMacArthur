@@ -7,8 +7,86 @@ interface LogEntry {
   context?: unknown;
 }
 
+const sensitiveKeyPattern =
+  /password|token|secret|authorization|cookie|api[_-]?key/i;
+
+const sanitize = (
+  value: unknown,
+  seen = new WeakSet<object>()
+): unknown => {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitize(item, seen));
+  }
+
+  if (value !== null && typeof value === "object") {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+
+    seen.add(value);
+
+    const sanitized: Record<string, unknown> = {};
+
+    for (const [key, item] of Object.entries(value)) {
+      sanitized[key] = sensitiveKeyPattern.test(key)
+        ? "[REDACTED]"
+        : sanitize(item, seen);
+    }
+
+    return sanitized;
+  }
+
+  return value;
+};
+
 const log = (entry: LogEntry): void => {
-  console.log(JSON.stringify(entry));
+  const sanitizedEntry = sanitize(entry) as LogEntry;
+
+  if (process.env.NODE_ENV === "production") {
+    const output = JSON.stringify(sanitizedEntry);
+
+    if (entry.level === "error") {
+      console.error(output);
+    } else if (entry.level === "warn") {
+      console.warn(output);
+    } else {
+      console.log(output);
+    }
+
+    return;
+  }
+
+  const level = entry.level.toUpperCase();
+  const context = entry.context !== undefined
+    ? ` ${JSON.stringify(sanitizedEntry.context)}`
+    : "";
+
+  const output =
+    `${entry.timestamp} [${level}] ${entry.message}${context}`;
+
+  if (entry.level === "error") {
+    console.error(output);
+  } else if (entry.level === "warn") {
+    console.warn(output);
+  } else {
+    console.log(output);
+  }
 };
 
 export const logger = {
