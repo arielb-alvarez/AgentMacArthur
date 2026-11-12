@@ -1,37 +1,56 @@
+import type { Server } from "node:http";
 import app from "./app.js";
 import { env } from "./config/env.js";
 import { connectDatabase, pool } from "./config/database.js";
 import { logger } from "./utils/logger.js";
+import { createShutdownHandler } from "./server-lifecycle.js";
 
 const startServer = async (): Promise<void> => {
+  let server: Server | undefined;
+
   try {
+    // Verify database connectivity before accepting requests.
     await connectDatabase();
 
-    const server = app.listen(env.PORT, () => {
-      logger.info(`AgentMacArthur running on port ${env.PORT}`);
+    server = app.listen(env.PORT);
+
+    // Wait until the HTTP server is actually listening.
+    await new Promise<void>((resolve, reject) => {
+      server!.once("listening", resolve);
+      server!.once("error", reject);
     });
 
-    const shutdown = async (signal: string): Promise<void> => {
-      logger.info(`${signal} received. Shutting down...`);
+    logger.info(`AgentMacArthur running on port ${env.PORT}`);
 
-      server.close(async () => {
-        try {
-          await pool.end();
-          logger.info("Database connections closed");
-          process.exit(0);
-        } catch (error) {
-          logger.error("Error during database shutdown", error);
-          process.exit(1);
-        }
-      });
-    };
+    const shutdown = createShutdownHandler(server, {
+      closeDatabase: () => pool.end(),
+      logger,
+      setExitCode: (code) => {
+        process.exitCode = code;
+      },
+      forceExit: (code) => {
+        process.exit(code);
+      },
+    });
 
-    process.on("SIGTERM", () => void shutdown("SIGTERM"));
-    process.on("SIGINT", () => void shutdown("SIGINT"));
+    process.once("SIGTERM", () => void shutdown("SIGTERM"));
+    process.once("SIGINT", () => void shutdown("SIGINT"));
   } catch (error) {
     logger.error("Failed to start AgentMacArthur", error);
-    await pool.end();
-    process.exit(1);
+
+    try {
+      if (server?.listening) {
+        await new Promise<void>((resolve) => {
+          server!.close(() => resolve());
+        });
+      }
+
+      await pool.end();
+    } catch (shutdownError) {
+      logger.error("Error cleaning up after startup failure", shutdownError);
+    }
+
+    process.exitCode = 1;
   }
 };
 
