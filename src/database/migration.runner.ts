@@ -18,6 +18,17 @@ interface ExecutedMigration {
   checksum: string | null;
 }
 
+export interface MigrationStatus {
+  name: string;
+  status:
+    | "PENDING"
+    | "EXECUTED"
+    | "CHECKSUM MISMATCH"
+    | "MISSING FILE";
+  checksum: string | null;
+  expectedChecksum?: string;
+}
+
 const getMigrationsDirectory = (
   directory?: string
 ): string => {
@@ -50,6 +61,88 @@ const getExecutedMigrations = async (
   );
 
   return result.rows;
+};
+
+export const getMigrationStatus = async (
+  db: Pool = defaultPool,
+  options: MigrationRunnerOptions = {}
+): Promise<MigrationStatus[]> => {
+  const migrationsDirectory = getMigrationsDirectory(
+    options.migrationsDirectory
+  );
+
+  const migrationFiles = await getMigrationFiles(
+    migrationsDirectory
+  );
+
+  const tableResult = await db.query<{ exists: boolean }>(
+    `
+      SELECT to_regclass('public.schema_migrations') IS NOT NULL AS exists;
+    `
+  );
+
+  const executedMigrations = tableResult.rows[0].exists
+    ? await getExecutedMigrations(db)
+    : [];
+
+  const statuses: MigrationStatus[] = [];
+
+  for (const migrationFile of migrationFiles) {
+    const migrationPath = path.join(
+      migrationsDirectory,
+      migrationFile
+    );
+
+    const sql = await readFile(migrationPath, "utf-8");
+    const expectedChecksum = generateChecksum(sql);
+
+    const executedMigration = executedMigrations.find(
+      (migration) => migration.name === migrationFile
+    );
+
+    if (!executedMigration) {
+      statuses.push({
+        name: migrationFile,
+        status: "PENDING",
+        checksum: expectedChecksum,
+      });
+
+      continue;
+    }
+
+    if (executedMigration.checksum !== expectedChecksum) {
+      statuses.push({
+        name: migrationFile,
+        status: "CHECKSUM MISMATCH",
+        checksum: executedMigration.checksum,
+        expectedChecksum,
+      });
+
+      continue;
+    }
+
+    statuses.push({
+      name: migrationFile,
+      status: "EXECUTED",
+      checksum: executedMigration.checksum,
+    });
+  }
+
+  for (const executedMigration of executedMigrations) {
+    const fileExists = migrationFiles.includes(
+      executedMigration.name
+    );
+
+    if (!fileExists) {
+      statuses.push({
+        name: executedMigration.name,
+        status: "MISSING FILE",
+        checksum: executedMigration.checksum,
+      });
+    }
+  }
+
+  return statuses;
 };
 
 const validateMigrationFiles = (
