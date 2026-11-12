@@ -20,6 +20,16 @@ pool.on("error", (error) => {
   logger.error("Unexpected PostgreSQL pool error", error);
 });
 
+export const checkDatabaseHealth = async (): Promise<boolean> => {
+  try {
+    await pool.query("SELECT 1");
+    return true;
+  } catch (error) {
+    logger.error("Database health check failed", error);
+    return false;
+  }
+};
+
 export const connectDatabase = async (): Promise<void> => {
   const client = await pool.connect();
 
