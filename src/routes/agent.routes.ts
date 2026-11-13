@@ -7,6 +7,7 @@ import { PostgresConversationRepository } from "../conversations/postgres-conver
 import { ConversationService } from "../conversations/conversation.service.js";
 
 import { validate } from "../middleware/validate.middleware.js";
+import { chatRateLimiter } from "../middleware/rate-limit.middleware.js";
 import { chatSchema } from "../validators/agent.validator.js";
 
 const router = Router();
@@ -22,6 +23,11 @@ const agentController = createAgentController(
   conversationService
 );
 
-router.post("/chat", validate(chatSchema), agentController.chat);
+router.post(
+  "/chat",
+  chatRateLimiter,
+  validate(chatSchema),
+  agentController.chat
+);
 
 export default router;
