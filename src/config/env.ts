@@ -1,4 +1,3 @@
-
 import dotenv from "dotenv";
 import { z } from "zod";
 
@@ -34,6 +33,16 @@ const envSchema = z
 
     AGENT_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
 
+    CORS_ORIGINS: z
+      .string()
+      .default("http://localhost:4200,http://localhost:5173")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean)
+      ),
+
     DB_HOST: z.string().trim().min(1).default("localhost"),
 
     DB_PORT: z.coerce
@@ -49,7 +58,11 @@ const envSchema = z
 
     DB_NAME: z.string().trim().min(1).default("agentmacarthur"),
 
-    DB_TEST_NAME: z.string().trim().min(1).default("agentmacarthur_test"),
+    DB_TEST_NAME: z
+      .string()
+      .trim()
+      .min(1)
+      .default("agentmacarthur_test"),
   })
   .superRefine((config, ctx) => {
     if (config.AGENT_PROVIDER === "openai") {
