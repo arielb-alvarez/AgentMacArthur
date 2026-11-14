@@ -80,6 +80,49 @@ describe("PostgresConversationRepository", () => {
     });
   });
 
+
+  it("returns the complete updated conversation after adding a message", async () => {
+    const conversation = await repository.create();
+
+    await repository.addMessage(conversation.id, {
+      role: "user",
+      content: "First message",
+    });
+
+    const updated = await repository.addMessage(conversation.id, {
+      role: "assistant",
+      content: "Second message",
+    });
+
+    expect(updated).toBeDefined();
+    expect(updated?.id).toBe(conversation.id);
+    expect(updated?.messages).toEqual([
+      {
+        role: "user",
+        content: "First message",
+      },
+      {
+        role: "assistant",
+        content: "Second message",
+      },
+    ]);
+    expect(updated?.createdAt).toBeInstanceOf(Date);
+    expect(updated?.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("returns undefined when adding a message to a nonexistent conversation", async () => {
+    const result = await repository.addMessage(
+      "00000000-0000-4000-8000-000000000000",
+      {
+        role: "user",
+        content: "This should not be saved",
+      }
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+
   it("preserves message order in a conversation", async () => {
     const conversation = await repository.create();
 

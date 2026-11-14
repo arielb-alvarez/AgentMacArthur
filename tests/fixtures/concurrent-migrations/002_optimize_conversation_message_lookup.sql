@@ -1,0 +1,4 @@
+CREATE INDEX idx_conversation_messages_conversation_order
+ON conversation_messages(conversation_id, message_order);
+
+DROP INDEX IF EXISTS idx_conversation_messages_conversation_id;

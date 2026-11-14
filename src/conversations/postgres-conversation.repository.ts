@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
@@ -87,6 +88,45 @@ export class PostgresConversationRepository
     }
   }
 
+  private async findByIdWithClient(
+    client: PoolClient,
+    id: string
+  ): Promise<Conversation | undefined> {
+    const conversationResult = await client.query<ConversationRow>(
+      `SELECT id, created_at, updated_at
+       FROM conversations
+       WHERE id = $1`,
+      [id]
+    );
+
+    const conversationRow = conversationResult.rows[0];
+
+    if (!conversationRow) {
+      return undefined;
+    }
+
+    const messagesResult = await client.query<MessageRow>(
+      `SELECT role, content
+       FROM conversation_messages
+       WHERE conversation_id = $1
+       ORDER BY message_order ASC`,
+      [id]
+    );
+
+    const messages: ConversationMessage[] =
+      messagesResult.rows.map((row) => ({
+        role: row.role,
+        content: row.content,
+      }));
+
+    return {
+      id: conversationRow.id,
+      messages,
+      createdAt: conversationRow.created_at,
+      updatedAt: conversationRow.updated_at,
+    };
+  }
+
   async create(): Promise<Conversation> {
     return this.withQueryTimeout("create", async (client) => {
       const id = randomUUID();
@@ -113,39 +153,7 @@ export class PostgresConversationRepository
     id: string
   ): Promise<Conversation | undefined> {
     return this.withQueryTimeout("findById", async (client) => {
-      const conversationResult = await client.query<ConversationRow>(
-        `SELECT id, created_at, updated_at
-         FROM conversations
-         WHERE id = $1`,
-        [id]
-      );
-
-      const conversationRow = conversationResult.rows[0];
-
-      if (!conversationRow) {
-        return undefined;
-      }
-
-      const messagesResult = await client.query<MessageRow>(
-        `SELECT role, content
-         FROM conversation_messages
-         WHERE conversation_id = $1
-         ORDER BY message_order ASC`,
-        [id]
-      );
-
-      const messages: ConversationMessage[] =
-        messagesResult.rows.map((row) => ({
-          role: row.role,
-          content: row.content,
-        }));
-
-      return {
-        id: conversationRow.id,
-        messages,
-        createdAt: conversationRow.created_at,
-        updatedAt: conversationRow.updated_at,
-      };
+      return this.findByIdWithClient(client, id);
     });
   }
 
@@ -153,25 +161,25 @@ export class PostgresConversationRepository
     conversationId: string,
     message: ConversationMessage
   ): Promise<Conversation | undefined> {
-    const updated = await this.withQueryTimeout(
+    return this.withQueryTimeout(
       "addMessage",
       async (client) => {
         const conversationResult = await client.query(
           `UPDATE conversations
-         SET updated_at = NOW()
-         WHERE id = $1
-         RETURNING id`,
+           SET updated_at = NOW()
+           WHERE id = $1
+           RETURNING id`,
           [conversationId]
         );
 
         if (conversationResult.rowCount === 0) {
-          return false;
+          return undefined;
         }
 
         await client.query(
           `INSERT INTO conversation_messages
-         (id, conversation_id, role, content)
-         VALUES ($1, $2, $3, $4)`,
+           (id, conversation_id, role, content)
+           VALUES ($1, $2, $3, $4)`,
           [
             randomUUID(),
             conversationId,
@@ -180,13 +188,8 @@ export class PostgresConversationRepository
           ]
         );
 
-        return true;
-      });
-
-    if (!updated) {
-      return undefined;
-    }
-
-    return this.findById(conversationId);
+        return this.findByIdWithClient(client, conversationId);
+      }
+    );
   }
 }
