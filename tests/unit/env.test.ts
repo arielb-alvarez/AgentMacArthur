@@ -55,6 +55,36 @@ describe("Environment configuration", () => {
     expect(env.DB_CONNECTION_TIMEOUT_MS).toBe(5000);
   });
 
+  it("should use the default slow query threshold", async () => {
+    const env = await loadEnv();
+
+    expect(env.DB_SLOW_QUERY_THRESHOLD_MS).toBe(1000);
+  });
+
+  it("should accept a custom slow query threshold", async () => {
+    const env = await loadEnv({
+      DB_SLOW_QUERY_THRESHOLD_MS: "2000",
+    });
+
+    expect(env.DB_SLOW_QUERY_THRESHOLD_MS).toBe(2000);
+  });
+
+  it("should reject an invalid slow query threshold", async () => {
+    await expect(
+      loadEnv({
+        DB_SLOW_QUERY_THRESHOLD_MS: "0",
+      })
+    ).rejects.toThrow("DB_SLOW_QUERY_THRESHOLD_MS");
+  });
+
+  it("should reject an excessive slow query threshold", async () => {
+    await expect(
+      loadEnv({
+        DB_SLOW_QUERY_THRESHOLD_MS: "300001",
+      })
+    ).rejects.toThrow("DB_SLOW_QUERY_THRESHOLD_MS");
+  });
+
   it("should accept custom database pool settings", async () => {
     const env = await loadEnv({
       DB_POOL_MAX: "20",

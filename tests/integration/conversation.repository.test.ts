@@ -1,5 +1,15 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
+import { logger } from "../../src/utils/logger.js";
 import { testPool } from "../../src/config/test-database.js";
 import { PostgresConversationRepository } from "../../src/conversations/postgres-conversation.repository.js";
 
@@ -21,6 +31,10 @@ describe("PostgresConversationRepository", () => {
 
   afterAll(async () => {
     await testPool.end();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("creates a conversation", async () => {
@@ -70,27 +84,66 @@ describe("PostgresConversationRepository", () => {
     const conversation = await repository.create();
 
     await repository.addMessage(conversation.id, {
-        role: "user",
-        content: "First message",
+      role: "user",
+      content: "First message",
     });
 
     await repository.addMessage(conversation.id, {
-        role: "assistant",
-        content: "Second message",
+      role: "assistant",
+      content: "Second message",
     });
 
     await repository.addMessage(conversation.id, {
-        role: "user",
-        content: "Third message",
+      role: "user",
+      content: "Third message",
     });
 
     const retrieved = await repository.findById(conversation.id);
 
     expect(retrieved?.messages.map((message) => message.content)).toEqual([
-        "First message",
-        "Second message",
-        "Third message",
+      "First message",
+      "Second message",
+      "Third message",
     ]);
+  });
+
+  it("logs a warning for slow database operations", async () => {
+    const warnSpy = vi
+      .spyOn(logger, "warn")
+      .mockImplementation(() => { });
+
+    const monitoredRepository = new PostgresConversationRepository(
+      testPool,
+      undefined,
+      1
+    );
+
+    await monitoredRepository.create();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Slow database operation detected",
+      expect.objectContaining({
+        operation: "create",
+        thresholdMs: 1,
+        durationMs: expect.any(Number),
+      })
+    );
+  });
+
+  it("does not log a warning for operations below the threshold", async () => {
+    const warnSpy = vi
+      .spyOn(logger, "warn")
+      .mockImplementation(() => { });
+
+    const monitoredRepository = new PostgresConversationRepository(
+      testPool,
+      undefined,
+      300000
+    );
+
+    await monitoredRepository.create();
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("cancels a query that exceeds the configured timeout", async () => {

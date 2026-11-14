@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { pool as defaultPool } from "../config/database.js";
 import { env } from "../config/env.js";
+import { logger } from "../utils/logger.js";
 
 import type {
   Conversation,
@@ -29,13 +30,17 @@ export class PostgresConversationRepository
 
   constructor(
     private readonly db: Pool = defaultPool,
-    private readonly queryTimeoutMs: number = env.DB_QUERY_TIMEOUT_MS
+    private readonly queryTimeoutMs: number = env.DB_QUERY_TIMEOUT_MS,
+    private readonly slowQueryThresholdMs: number =
+      env.DB_SLOW_QUERY_THRESHOLD_MS
   ) {}
 
-  
   private async withQueryTimeout<T>(
+    operationName: string,
     operation: (client: PoolClient) => Promise<T>
   ): Promise<T> {
+    const startedAt = process.hrtime.bigint();
+
     const client = await this.db.connect();
     let releaseError: Error | undefined;
 
@@ -64,13 +69,26 @@ export class PostgresConversationRepository
 
       throw error;
     } finally {
-      // Passing an error destroys the client instead of returning it to the pool.
       client.release(releaseError);
+
+      const durationMs = Number(
+        (
+          Number(process.hrtime.bigint() - startedAt) / 1_000_000
+        ).toFixed(2)
+      );
+
+      if (durationMs >= this.slowQueryThresholdMs) {
+        logger.warn("Slow database operation detected", {
+          operation: operationName,
+          durationMs,
+          thresholdMs: this.slowQueryThresholdMs,
+        });
+      }
     }
   }
 
   async create(): Promise<Conversation> {
-    return this.withQueryTimeout(async (client) => {
+    return this.withQueryTimeout("create", async (client) => {
       const id = randomUUID();
 
       const result = await client.query<ConversationRow>(
@@ -94,7 +112,7 @@ export class PostgresConversationRepository
   async findById(
     id: string
   ): Promise<Conversation | undefined> {
-    return this.withQueryTimeout(async (client) => {
+    return this.withQueryTimeout("findById", async (client) => {
       const conversationResult = await client.query<ConversationRow>(
         `SELECT id, created_at, updated_at
          FROM conversations
@@ -135,33 +153,35 @@ export class PostgresConversationRepository
     conversationId: string,
     message: ConversationMessage
   ): Promise<Conversation | undefined> {
-    const updated = await this.withQueryTimeout(async (client) => {
-      const conversationResult = await client.query(
-        `UPDATE conversations
+    const updated = await this.withQueryTimeout(
+      "addMessage",
+      async (client) => {
+        const conversationResult = await client.query(
+          `UPDATE conversations
          SET updated_at = NOW()
          WHERE id = $1
          RETURNING id`,
-        [conversationId]
-      );
+          [conversationId]
+        );
 
-      if (conversationResult.rowCount === 0) {
-        return false;
-      }
+        if (conversationResult.rowCount === 0) {
+          return false;
+        }
 
-      await client.query(
-        `INSERT INTO conversation_messages
+        await client.query(
+          `INSERT INTO conversation_messages
          (id, conversation_id, role, content)
          VALUES ($1, $2, $3, $4)`,
-        [
-          randomUUID(),
-          conversationId,
-          message.role,
-          message.content,
-        ]
-      );
+          [
+            randomUUID(),
+            conversationId,
+            message.role,
+            message.content,
+          ]
+        );
 
-      return true;
-    });
+        return true;
+      });
 
     if (!updated) {
       return undefined;

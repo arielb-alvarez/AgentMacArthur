@@ -92,6 +92,13 @@ const envSchema = z
       .min(1)
       .max(300000)
       .default(30000),
+
+    DB_SLOW_QUERY_THRESHOLD_MS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(300000)
+      .default(1000),
   })
   .superRefine((config, ctx) => {
     if (config.AGENT_PROVIDER === "openai") {
