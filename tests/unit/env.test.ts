@@ -1,4 +1,3 @@
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const defaultEnv: Record<string, string | undefined> = {
@@ -46,6 +45,60 @@ describe("Environment configuration", () => {
     expect(env.AGENT_PROVIDER).toBe("mock");
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.DB_PASSWORD).toBe("test-password");
+  });
+
+  it("should use default database pool settings", async () => {
+    const env = await loadEnv();
+
+    expect(env.DB_POOL_MAX).toBe(10);
+    expect(env.DB_IDLE_TIMEOUT_MS).toBe(30000);
+    expect(env.DB_CONNECTION_TIMEOUT_MS).toBe(5000);
+  });
+
+  it("should accept custom database pool settings", async () => {
+    const env = await loadEnv({
+      DB_POOL_MAX: "20",
+      DB_IDLE_TIMEOUT_MS: "60000",
+      DB_CONNECTION_TIMEOUT_MS: "10000",
+    });
+
+    expect(env.DB_POOL_MAX).toBe(20);
+    expect(env.DB_IDLE_TIMEOUT_MS).toBe(60000);
+    expect(env.DB_CONNECTION_TIMEOUT_MS).toBe(10000);
+  });
+
+  it("should accept zero timeout values", async () => {
+    const env = await loadEnv({
+      DB_IDLE_TIMEOUT_MS: "0",
+      DB_CONNECTION_TIMEOUT_MS: "0",
+    });
+
+    expect(env.DB_IDLE_TIMEOUT_MS).toBe(0);
+    expect(env.DB_CONNECTION_TIMEOUT_MS).toBe(0);
+  });
+
+  it("should reject an invalid database pool maximum", async () => {
+    await expect(
+      loadEnv({ DB_POOL_MAX: "0" })
+    ).rejects.toThrow("DB_POOL_MAX");
+  });
+
+  it("should reject an excessive database pool maximum", async () => {
+    await expect(
+      loadEnv({ DB_POOL_MAX: "101" })
+    ).rejects.toThrow("DB_POOL_MAX");
+  });
+
+  it("should reject an invalid idle timeout", async () => {
+    await expect(
+      loadEnv({ DB_IDLE_TIMEOUT_MS: "-1" })
+    ).rejects.toThrow("DB_IDLE_TIMEOUT_MS");
+  });
+
+  it("should reject an excessive connection timeout", async () => {
+    await expect(
+      loadEnv({ DB_CONNECTION_TIMEOUT_MS: "70000" })
+    ).rejects.toThrow("DB_CONNECTION_TIMEOUT_MS");
   });
 
   it("should accept a valid OpenAI configuration", async () => {

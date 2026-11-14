@@ -63,6 +63,35 @@ const envSchema = z
       .trim()
       .min(1)
       .default("agentmacarthur_test"),
+
+    // PostgreSQL connection pool configuration.
+    DB_POOL_MAX: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(10),
+
+    DB_IDLE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(600000)
+      .default(30000),
+
+    DB_CONNECTION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(60000)
+      .default(5000),
+
+    DB_QUERY_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(300000)
+      .default(30000),
   })
   .superRefine((config, ctx) => {
     if (config.AGENT_PROVIDER === "openai") {

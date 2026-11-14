@@ -1,8 +1,8 @@
-
 import { randomUUID } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { pool as defaultPool } from "../config/database.js";
+import { env } from "../config/env.js";
 
 import type {
   Conversation,
@@ -27,75 +27,115 @@ interface MessageRow {
 export class PostgresConversationRepository
   implements ConversationRepository {
 
-  constructor(private readonly db: Pool = defaultPool) {}
+  constructor(
+    private readonly db: Pool = defaultPool,
+    private readonly queryTimeoutMs: number = env.DB_QUERY_TIMEOUT_MS
+  ) {}
+
+  
+  private async withQueryTimeout<T>(
+    operation: (client: PoolClient) => Promise<T>
+  ): Promise<T> {
+    const client = await this.db.connect();
+    let releaseError: Error | undefined;
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        "SELECT set_config('statement_timeout', $1, true)",
+        [`${this.queryTimeoutMs}ms`]
+      );
+
+      const result = await operation(client);
+
+      await client.query("COMMIT");
+
+      return result;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        releaseError =
+          rollbackError instanceof Error
+            ? rollbackError
+            : new Error("Failed to roll back database transaction");
+      }
+
+      throw error;
+    } finally {
+      // Passing an error destroys the client instead of returning it to the pool.
+      client.release(releaseError);
+    }
+  }
 
   async create(): Promise<Conversation> {
-    const id = randomUUID();
+    return this.withQueryTimeout(async (client) => {
+      const id = randomUUID();
 
-    const result = await this.db.query<ConversationRow>(
-      `INSERT INTO conversations (id)
-       VALUES ($1)
-       RETURNING id, created_at, updated_at`,
-      [id]
-    );
+      const result = await client.query<ConversationRow>(
+        `INSERT INTO conversations (id)
+         VALUES ($1)
+         RETURNING id, created_at, updated_at`,
+        [id]
+      );
 
-    const row = result.rows[0];
+      const row = result.rows[0];
 
-    return {
-      id: row.id,
-      messages: [],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+      return {
+        id: row.id,
+        messages: [],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
   }
 
   async findById(
     id: string
   ): Promise<Conversation | undefined> {
-    const conversationResult = await this.db.query<ConversationRow>(
-      `SELECT id, created_at, updated_at
-       FROM conversations
-       WHERE id = $1`,
-      [id]
-    );
+    return this.withQueryTimeout(async (client) => {
+      const conversationResult = await client.query<ConversationRow>(
+        `SELECT id, created_at, updated_at
+         FROM conversations
+         WHERE id = $1`,
+        [id]
+      );
 
-    const conversationRow = conversationResult.rows[0];
+      const conversationRow = conversationResult.rows[0];
 
-    if (!conversationRow) {
-      return undefined;
-    }
+      if (!conversationRow) {
+        return undefined;
+      }
 
-    const messagesResult = await this.db.query<MessageRow>(
-      `SELECT role, content
-       FROM conversation_messages
-       WHERE conversation_id = $1
-       ORDER BY message_order ASC`,
-      [id]
-    );
+      const messagesResult = await client.query<MessageRow>(
+        `SELECT role, content
+         FROM conversation_messages
+         WHERE conversation_id = $1
+         ORDER BY message_order ASC`,
+        [id]
+      );
 
-    const messages: ConversationMessage[] =
-      messagesResult.rows.map((row) => ({
-        role: row.role,
-        content: row.content,
-      }));
+      const messages: ConversationMessage[] =
+        messagesResult.rows.map((row) => ({
+          role: row.role,
+          content: row.content,
+        }));
 
-    return {
-      id: conversationRow.id,
-      messages,
-      createdAt: conversationRow.created_at,
-      updatedAt: conversationRow.updated_at,
-    };
+      return {
+        id: conversationRow.id,
+        messages,
+        createdAt: conversationRow.created_at,
+        updatedAt: conversationRow.updated_at,
+      };
+    });
   }
 
   async addMessage(
     conversationId: string,
     message: ConversationMessage
   ): Promise<Conversation | undefined> {
-    const client = await this.db.connect();
-
-    try {
-      await client.query("BEGIN");
-
+    const updated = await this.withQueryTimeout(async (client) => {
       const conversationResult = await client.query(
         `UPDATE conversations
          SET updated_at = NOW()
@@ -105,8 +145,7 @@ export class PostgresConversationRepository
       );
 
       if (conversationResult.rowCount === 0) {
-        await client.query("ROLLBACK");
-        return undefined;
+        return false;
       }
 
       await client.query(
@@ -121,12 +160,11 @@ export class PostgresConversationRepository
         ]
       );
 
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+      return true;
+    });
+
+    if (!updated) {
+      return undefined;
     }
 
     return this.findById(conversationId);

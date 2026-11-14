@@ -92,4 +92,46 @@ describe("PostgresConversationRepository", () => {
         "Third message",
     ]);
   });
+
+  it("cancels a query that exceeds the configured timeout", async () => {
+    const conversation = await repository.create();
+
+    const blocker = await testPool.connect();
+
+    const shortTimeoutRepository = new PostgresConversationRepository(
+      testPool,
+      100
+    );
+
+    try {
+      // Hold a row lock so the repository's UPDATE must wait.
+      await blocker.query("BEGIN");
+
+      await blocker.query(
+        `UPDATE conversations
+        SET updated_at = NOW()
+        WHERE id = $1`,
+        [conversation.id]
+      );
+
+      // PostgreSQL should cancel the waiting query after 100 ms.
+      await expect(
+        shortTimeoutRepository.addMessage(conversation.id, {
+          role: "user",
+          content: "This query should time out",
+        })
+      ).rejects.toMatchObject({
+        code: "57014",
+      });
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+
+    // Confirm the failed transaction did not save a message
+    // and the repository can still use the connection pool.
+    const retrieved = await repository.findById(conversation.id);
+
+    expect(retrieved?.messages).toHaveLength(0);
+  });
 });

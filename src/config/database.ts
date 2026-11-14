@@ -11,11 +11,13 @@ export const pool = new Pool({
   password: env.DB_PASSWORD,
   database: env.DB_NAME,
 
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  // Connection pool configuration.
+  max: env.DB_POOL_MAX,
+  idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
+  connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
 });
 
+// Handle unexpected errors from idle pool clients.
 pool.on("error", (error) => {
   logger.error("Unexpected PostgreSQL pool error", error);
 });
