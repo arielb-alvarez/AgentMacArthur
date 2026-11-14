@@ -12,6 +12,7 @@ interface ShutdownDependencies {
   setExitCode: (code: number) => void;
   forceExit: (code: number) => void;
   timeoutMs?: number;
+  stopMonitoring?: () => void;
 }
 
 export const createShutdownHandler = (
@@ -20,6 +21,7 @@ export const createShutdownHandler = (
 ) => {
   const {
     closeDatabase,
+    stopMonitoring,
     logger,
     setExitCode,
     forceExit,
@@ -35,6 +37,12 @@ export const createShutdownHandler = (
     }
 
     isShuttingDown = true;
+
+    try {
+      stopMonitoring?.();
+    } catch (error) {
+      logger.error("Error stopping database pool monitoring", error);
+    }
 
     logger.info(`${signal} received. Shutting down...`);
 

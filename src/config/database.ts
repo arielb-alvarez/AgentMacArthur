@@ -22,6 +22,61 @@ pool.on("error", (error) => {
   logger.error("Unexpected PostgreSQL pool error", error);
 });
 
+export const getDatabasePoolMetrics = () => ({
+  totalCount: pool.totalCount,
+  idleCount: pool.idleCount,
+  waitingCount: pool.waitingCount,
+});
+
+export const logDatabasePoolMetrics = (): void => {
+  const metrics = getDatabasePoolMetrics();
+
+  const activeCount = metrics.totalCount - metrics.idleCount;
+
+  const utilizationPercent = Number(
+    ((activeCount / env.DB_POOL_MAX) * 100).toFixed(2)
+  );
+
+  const context = {
+    ...metrics,
+    activeCount,
+    maxConnections: env.DB_POOL_MAX,
+    utilizationPercent,
+  };
+
+  if (utilizationPercent >= 100 || metrics.waitingCount > 0) {
+    logger.error("Database connection pool is saturated", context);
+    return;
+  }
+
+  if (utilizationPercent >= 80) {
+    logger.warn("Database connection pool utilization is high", context);
+    return;
+  }
+
+  logger.info("Database connection pool metrics", context);
+};
+
+export const startDatabasePoolMonitoring = (
+  intervalMs = 60_000
+): (() => void) => {
+  const interval = setInterval(() => {
+    logDatabasePoolMetrics();
+  }, intervalMs);
+
+  interval.unref();
+
+  logger.info("Database pool monitoring started", {
+    intervalMs,
+  });
+
+  return () => {
+    clearInterval(interval);
+
+    logger.info("Database pool monitoring stopped");
+  };
+};
+
 export const checkDatabaseHealth = async (): Promise<boolean> => {
   try {
     await pool.query("SELECT 1");

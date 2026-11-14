@@ -1,7 +1,12 @@
 import type { Server } from "node:http";
 import app from "./app.js";
 import { env } from "./config/env.js";
-import { connectDatabase, pool } from "./config/database.js";
+import {
+  connectDatabase,
+  logDatabasePoolMetrics,
+  pool,
+  startDatabasePoolMonitoring,
+} from "./config/database.js";
 import { logger } from "./utils/logger.js";
 import { createShutdownHandler } from "./server-lifecycle.js";
 
@@ -12,6 +17,7 @@ const startServer = async (): Promise<void> => {
     // Verify database connectivity before accepting requests.
     await connectDatabase();
 
+    // Start the HTTP server.
     server = app.listen(env.PORT);
 
     // Wait until the HTTP server is actually listening.
@@ -22,8 +28,13 @@ const startServer = async (): Promise<void> => {
 
     logger.info(`AgentMacArthur running on port ${env.PORT}`);
 
+    // Start periodic database pool monitoring.
+    logDatabasePoolMetrics();
+    const stopDatabasePoolMonitoring = startDatabasePoolMonitoring();
+
     const shutdown = createShutdownHandler(server, {
       closeDatabase: () => pool.end(),
+      stopMonitoring: stopDatabasePoolMonitoring,
       logger,
       setExitCode: (code) => {
         process.exitCode = code;

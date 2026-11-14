@@ -28,6 +28,7 @@ describe("Server lifecycle", () => {
 
   const createDependencies = () => ({
     closeDatabase: vi.fn().mockResolvedValue(undefined),
+    stopMonitoring: vi.fn(),
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -48,6 +49,7 @@ describe("Server lifecycle", () => {
 
     expect(close).toHaveBeenCalledOnce();
     expect(dependencies.closeDatabase).toHaveBeenCalledOnce();
+    expect(dependencies.stopMonitoring).toHaveBeenCalledOnce();
     expect(dependencies.setExitCode).toHaveBeenCalledWith(0);
     expect(dependencies.logger.info).toHaveBeenCalledWith(
       "Graceful shutdown completed"
