@@ -153,4 +153,62 @@ describe("Logger", () => {
       vi.stubEnv("NODE_ENV", originalNodeEnv);
     }
   });
+
+
+  it("should serialize Error objects safely", () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const error = new Error("Database operation failed");
+
+    logger.error("An exception occurred", { error });
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+
+    expect(output).toContain("Error");
+    expect(output).toContain("Database operation failed");
+  });
+
+  it("should sanitize objects inside arrays", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    logger.info("Array context", {
+      users: [
+        {
+          username: "test-user",
+          password: "hidden-password",
+        },
+        {
+          username: "another-user",
+          token: "hidden-token",
+        },
+      ],
+    });
+
+    const output = consoleSpy.mock.calls[0]?.[0] as string;
+
+    expect(output).toContain("test-user");
+    expect(output).toContain("another-user");
+    expect(output).not.toContain("hidden-password");
+    expect(output).not.toContain("hidden-token");
+    expect(output).toContain("[REDACTED]");
+  });
+
+  it("should use error and warning output streams in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    logger.error("Production error");
+    logger.warn("Production warning");
+
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledOnce();
+
+    expect(JSON.parse(errorSpy.mock.calls[0]?.[0] as string).level)
+      .toBe("error");
+
+    expect(JSON.parse(warnSpy.mock.calls[0]?.[0] as string).level)
+      .toBe("warn");
+  });
 });

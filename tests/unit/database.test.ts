@@ -13,6 +13,7 @@ import {
     connectDatabase,
     getDatabasePoolMetrics,
     logDatabasePoolMetrics,
+    startDatabasePoolMonitoring,
 } from "../../src/config/database.js";
 
 const mockPool = vi.hoisted(() => ({
@@ -66,15 +67,15 @@ describe("Database Pool Monitoring", () => {
     it("logs informational metrics when pool utilization is normal", () => {
         const loggerSpy = vi
             .spyOn(logger, "info")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         const warnSpy = vi
             .spyOn(logger, "warn")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         const errorSpy = vi
             .spyOn(logger, "error")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         mockPool.totalCount = 5;
         mockPool.idleCount = 5;
@@ -98,7 +99,7 @@ describe("Database Pool Monitoring", () => {
     it("logs a warning when pool utilization reaches 80 percent", () => {
         const warnSpy = vi
             .spyOn(logger, "warn")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         mockPool.totalCount = 10;
         mockPool.idleCount = 2;
@@ -119,7 +120,7 @@ describe("Database Pool Monitoring", () => {
     it("logs an error when the pool is saturated", () => {
         const errorSpy = vi
             .spyOn(logger, "error")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         mockPool.totalCount = 10;
         mockPool.idleCount = 0;
@@ -140,7 +141,7 @@ describe("Database Pool Monitoring", () => {
     it("logs an error when requests are waiting for connections", () => {
         const errorSpy = vi
             .spyOn(logger, "error")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         mockPool.totalCount = 8;
         mockPool.idleCount = 0;
@@ -166,7 +167,7 @@ describe("Database Pool Monitoring", () => {
 
         const errorSpy = vi
             .spyOn(logger, "error")
-            .mockImplementation(() => {});
+            .mockImplementation(() => { });
 
         const result = await checkDatabaseHealth();
 
@@ -202,5 +203,105 @@ describe("Database Pool Monitoring", () => {
         );
 
         expect(release).toHaveBeenCalledOnce();
+    });
+
+
+    it("returns true when the database health check succeeds", async () => {
+        mockPool.query.mockResolvedValueOnce({
+            rows: [{ "?column?": 1 }],
+        });
+
+        const result = await checkDatabaseHealth();
+
+        expect(result).toBe(true);
+        expect(mockPool.query).toHaveBeenCalledWith("SELECT 1");
+    });
+
+    it("connects successfully and releases the database client", async () => {
+        const query = vi.fn().mockResolvedValueOnce({
+            rows: [{ "?column?": 1 }],
+        });
+        const release = vi.fn();
+
+        mockPool.connect.mockResolvedValueOnce({
+            query,
+            release,
+        });
+
+        const loggerSpy = vi
+            .spyOn(logger, "info")
+            .mockImplementation(() => { });
+
+        await expect(connectDatabase()).resolves.toBeUndefined();
+
+        expect(query).toHaveBeenCalledWith("SELECT 1");
+        expect(release).toHaveBeenCalledOnce();
+
+        expect(loggerSpy).toHaveBeenCalledWith(
+            "PostgreSQL database connected successfully"
+        );
+    });
+
+    it("starts monitoring, records metrics, and stops monitoring", () => {
+        vi.useFakeTimers();
+
+        mockPool.totalCount = 5;
+        mockPool.idleCount = 5;
+        mockPool.waitingCount = 0;
+
+        const loggerSpy = vi
+            .spyOn(logger, "info")
+            .mockImplementation(() => { });
+
+        const stopMonitoring = startDatabasePoolMonitoring(1000);
+
+        expect(loggerSpy).toHaveBeenCalledWith(
+            "Database pool monitoring started",
+            { intervalMs: 1000 }
+        );
+
+        loggerSpy.mockClear();
+
+        vi.advanceTimersByTime(1000);
+
+        expect(loggerSpy).toHaveBeenCalledWith(
+            "Database connection pool metrics",
+            expect.any(Object)
+        );
+
+        loggerSpy.mockClear();
+
+        stopMonitoring();
+
+        expect(loggerSpy).toHaveBeenCalledWith(
+            "Database pool monitoring stopped"
+        );
+
+        loggerSpy.mockClear();
+
+        vi.advanceTimersByTime(2000);
+
+        expect(loggerSpy).not.toHaveBeenCalled();
+
+        vi.useRealTimers();
+    });
+
+    it("uses the default monitoring interval when none is provided", () => {
+        vi.useFakeTimers();
+
+        const loggerSpy = vi
+            .spyOn(logger, "info")
+            .mockImplementation(() => { });
+
+        const stopMonitoring = startDatabasePoolMonitoring();
+
+        expect(loggerSpy).toHaveBeenCalledWith(
+            "Database pool monitoring started",
+            { intervalMs: 60_000 }
+        );
+
+        stopMonitoring();
+
+        vi.useRealTimers();
     });
 });
