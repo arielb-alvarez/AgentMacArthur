@@ -32,6 +32,11 @@ const options: swaggerJsdoc.Options = {
         description:
           "Account registration, email verification, login, sessions, and authentication.",
       },
+      {
+        name: "Projects",
+        description:
+          "Project creation, discovery, access, and management.",
+      },
     ],
 
     components: {
@@ -240,6 +245,64 @@ const options: swaggerJsdoc.Options = {
             token: {
               type: "string",
               description: "Raw email verification token.",
+            },
+          },
+        },
+
+        CreateProjectRequest: {
+          type: "object",
+          additionalProperties: false,
+          required: ["organizationId", "name"],
+          properties: {
+            organizationId: {
+              type: "string",
+              format: "uuid",
+            },
+            name: {
+              type: "string",
+              minLength: 1,
+              maxLength: 150,
+            },
+            description: {
+              type: "string",
+              maxLength: 10000,
+              nullable: true,
+            },
+          },
+        },
+
+        UpdateProjectRequest: {
+          type: "object",
+          additionalProperties: false,
+          minProperties: 1,
+          properties: {
+            name: {
+              type: "string",
+              minLength: 1,
+              maxLength: 150,
+            },
+            description: {
+              type: "string",
+              maxLength: 10000,
+              nullable: true,
+            },
+          },
+        },
+
+        UpdateProjectStatusRequest: {
+          type: "object",
+          additionalProperties: false,
+          required: ["status"],
+          properties: {
+            status: {
+              type: "string",
+              enum: [
+                "draft",
+                "active",
+                "on_hold",
+                "completed",
+                "archived",
+              ],
             },
           },
         },

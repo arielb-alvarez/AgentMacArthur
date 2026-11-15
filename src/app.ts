@@ -7,6 +7,7 @@ import { env } from "./config/env.js";
 import healthRouter from "./routes/health.routes.js";
 import agentRouter from "./routes/agent.routes.js";
 import authRouter from "./routes/auth.routes.js";
+import projectRouter from "./routes/project.routes.js";
 
 import { errorMiddleware } from "./middleware/error.middleware.js";
 import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
@@ -64,6 +65,8 @@ export const createApp = () => {
   app.use("/api", apiRateLimiter);
 
   app.use("/api/auth", authRouter);
+
+  app.use("/api/projects", projectRouter);
 
   app.use("/api/agent", agentRouter);
 
