@@ -13,6 +13,9 @@ import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
 import { requestLoggerMiddleware } from "./middleware/request-logger.middleware.js";
 import { apiRateLimiter } from "./middleware/rate-limit.middleware.js";
 
+import swaggerUi from "swagger-ui-express";
+import { openApiSpecification } from "./docs/openapi.js";
+
 export const createApp = () => {
   const app = express();
 
@@ -44,6 +47,13 @@ export const createApp = () => {
 
   // Limit incoming JSON payloads to 1 MB.
   app.use(express.json({ limit: "1mb" }));
+
+  // API documentation.
+  app.use(
+    "/api-docs",
+    swaggerUi.serve,
+    swaggerUi.setup(openApiSpecification)
+  );
 
   app.use("/health", healthRouter);
 
