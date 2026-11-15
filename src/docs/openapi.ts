@@ -27,6 +27,11 @@ const options: swaggerJsdoc.Options = {
         name: "Agent",
         description: "AI agent interaction endpoints",
       },
+      {
+        name: "Authentication",
+        description:
+          "Account registration, email verification, login, sessions, and authentication.",
+      },
     ],
 
     components: {
@@ -200,6 +205,52 @@ const options: swaggerJsdoc.Options = {
               format: "date-time",
             },
           },
+        },
+
+        RegisterRequest: {
+          type: "object",
+          additionalProperties: false,
+          required: ["email", "password", "displayName"],
+          properties: {
+            email: {
+              type: "string",
+              format: "email",
+              example: "user@example.com",
+            },
+            password: {
+              type: "string",
+              minLength: 8,
+              maxLength: 128,
+              example: "StrongPassword123!",
+            },
+            displayName: {
+              type: "string",
+              minLength: 2,
+              maxLength: 100,
+              example: "John Doe",
+            },
+          },
+        },
+
+        VerifyEmailRequest: {
+          type: "object",
+          additionalProperties: false,
+          required: ["token"],
+          properties: {
+            token: {
+              type: "string",
+              description: "Raw email verification token.",
+            },
+          },
+        },
+      },
+
+      securitySchemes: {
+        SessionCookie: {
+          type: "apiKey",
+          in: "cookie",
+          name: "agentmacarthur_session",
+          description: "HttpOnly authentication session cookie.",
         },
       },
     },
