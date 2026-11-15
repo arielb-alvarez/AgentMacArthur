@@ -20,7 +20,7 @@ export const errorMiddleware = (
     errorName: error.name,
   });
 
-  if (error instanceof AppError) {
+  if (error instanceof AppError && error.isOperational) {
     return res.status(error.statusCode).json({
       success: false,
       message: error.message,

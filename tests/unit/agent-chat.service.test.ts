@@ -191,7 +191,8 @@ describe("Agent Chat Service", () => {
     await expect(
       service.chat({ message: "Hello" })
     ).rejects.toMatchObject({
-      statusCode: 404,
+      statusCode: 500,
+      message: "Conversation could not be updated.",
     });
 
     expect(fakeProvider.generateChatResponse).not.toHaveBeenCalled();
@@ -262,7 +263,7 @@ describe("Agent Chat Service", () => {
         service.chat({ message: "Hello" })
     ).rejects.toMatchObject({
         message: "Conversation could not be updated.",
-        statusCode: 404,
+        statusCode: 500,
     });
 
     expect(fakeProvider.generateChatResponse).toHaveBeenCalledOnce();

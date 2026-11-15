@@ -42,7 +42,7 @@ export class AgentChatService {
       });
 
     if (!updatedConversation) {
-      throw new AppError("Conversation could not be updated.", 404);
+      throw new AppError("Conversation could not be updated.", 500);
     }
 
     const messages: ConversationMessage[] =
@@ -57,7 +57,7 @@ export class AgentChatService {
       });
 
     if (!completedConversation) {
-      throw new AppError("Conversation could not be updated.", 404);
+      throw new AppError("Conversation could not be updated.", 500);
     }
 
     return {
