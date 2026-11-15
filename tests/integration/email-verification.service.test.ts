@@ -23,6 +23,7 @@ import { PostgresUserRepository } from "../../src/users/postgres-user.repository
 import { PostgresOrganizationRepository } from "../../src/organizations/postgres-organization.repository.js";
 import { PostgresOrganizationMemberRepository } from "../../src/organization-members/postgres-organization-member.repository.js";
 import { PostgresAuthTokenRepository } from "../../src/auth-tokens/postgres-auth-token.repository.js";
+import { PostgresRoleAssignmentRepository } from "../../src/role-assignments/postgres-role-assignment.repository.js";
 
 describe("EmailVerificationService integration", () => {
   const transactionManager = new PostgresTransactionManager(testPool);
@@ -43,6 +44,12 @@ describe("EmailVerificationService integration", () => {
       transactionManager
     );
 
+  const roleAssignmentRepository =
+    new PostgresRoleAssignmentRepository(
+      testPool,
+      transactionManager
+    );
+
   const authTokenRepository = new PostgresAuthTokenRepository(
     testPool,
     transactionManager
@@ -55,6 +62,7 @@ describe("EmailVerificationService integration", () => {
     userRepository,
     organizationRepository,
     organizationMemberRepository,
+    roleAssignmentRepository,
     authTokenRepository,
     transactionManager,
     passwordService,

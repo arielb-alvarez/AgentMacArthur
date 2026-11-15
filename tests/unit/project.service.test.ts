@@ -14,6 +14,7 @@ const mocks = {
   findOrganizationMember: vi.fn(),
   createProjectMember: vi.fn(),
   findProjectMember: vi.fn(),
+  assignProjectRole: vi.fn(),
 };
 
 describe("ProjectService", () => {
@@ -65,6 +66,7 @@ describe("ProjectService", () => {
     mocks.findAccessibleByUserId.mockResolvedValue([project]);
     mocks.updateProject.mockResolvedValue(project);
     mocks.updateProjectStatus.mockResolvedValue(project);
+    mocks.assignProjectRole.mockResolvedValue(undefined);
 
     mocks.findOrganizationMember.mockResolvedValue(
       activeOrganizationMember
@@ -87,6 +89,9 @@ describe("ProjectService", () => {
       } as never,
       {
         findByOrganizationAndUser: mocks.findOrganizationMember,
+      } as never,
+      {
+        assignProjectRole: mocks.assignProjectRole,
       } as never,
       {
         runInTransaction: mocks.runInTransaction,
@@ -127,6 +132,17 @@ describe("ProjectService", () => {
           userId,
           role: "project_owner",
           status: "active",
+        },
+        expect.any(Object)
+      );
+
+      expect(mocks.assignProjectRole).toHaveBeenCalledWith(
+        {
+          projectId: project.id,
+          organizationId,
+          userId,
+          roleKey: "project_owner",
+          assignedBy: userId,
         },
         expect.any(Object)
       );
@@ -177,6 +193,22 @@ describe("ProjectService", () => {
           name: "Test Project",
         })
       ).rejects.toThrow("Membership creation failed");
+    });
+
+    it("should propagate errors when project owner role assignment fails", async () => {
+      mocks.assignProjectRole.mockRejectedValue(
+        new Error("Project owner role assignment failed")
+      );
+
+      await expect(
+        service.create(userId, {
+          organizationId,
+          name: "Test Project",
+        })
+      ).rejects.toThrow("Project owner role assignment failed");
+
+      expect(mocks.createProject).toHaveBeenCalledOnce();
+      expect(mocks.createProjectMember).toHaveBeenCalledOnce();
     });
   });
 

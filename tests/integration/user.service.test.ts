@@ -21,6 +21,7 @@ import { PostgresUserRepository } from "../../src/users/postgres-user.repository
 import { PostgresOrganizationRepository } from "../../src/organizations/postgres-organization.repository.js";
 import { PostgresOrganizationMemberRepository } from "../../src/organization-members/postgres-organization-member.repository.js";
 import { PostgresAuthTokenRepository } from "../../src/auth-tokens/postgres-auth-token.repository.js";
+import { PostgresRoleAssignmentRepository } from "../../src/role-assignments/postgres-role-assignment.repository.js";
 
 import { UserService } from "../../src/users/user.service.js";
 
@@ -44,6 +45,12 @@ describe("UserService integration", () => {
       transactionManager
     );
 
+  const roleAssignmentRepository =
+    new PostgresRoleAssignmentRepository(
+      testPool,
+      transactionManager
+    );
+
   const authTokenRepository = new PostgresAuthTokenRepository(
     testPool,
     transactionManager
@@ -56,6 +63,7 @@ describe("UserService integration", () => {
     userRepository,
     organizationRepository,
     organizationMemberRepository,
+    roleAssignmentRepository,
     authTokenRepository,
     transactionManager,
     passwordService,
@@ -106,6 +114,25 @@ describe("UserService integration", () => {
     expect(membership).toBeDefined();
     expect(membership?.role).toBe("owner");
     expect(membership?.status).toBe("active");
+
+    const roleAssignments = await testPool.query(
+      `SELECT
+        r.scope,
+        r.key,
+        omr.assigned_by
+      FROM organization_member_roles omr
+      INNER JOIN roles r ON r.id = omr.role_id
+      WHERE omr.organization_id = $1
+        AND omr.user_id = $2`,
+      [organization!.id, result.user.id]
+    );
+
+    expect(roleAssignments.rowCount).toBe(1);
+    expect(roleAssignments.rows[0]).toMatchObject({
+      scope: "organization",
+      key: "owner",
+      assigned_by: result.user.id,
+    });
   });
 
   it("should persist only the verification token hash", async () => {
@@ -270,6 +297,7 @@ describe("UserService integration", () => {
       userRepository,
       organizationRepository,
       organizationMemberRepository,
+      roleAssignmentRepository,
       failingAuthTokenRepository,
       transactionManager,
       passwordService,
@@ -298,5 +326,78 @@ describe("UserService integration", () => {
     );
 
     expect(organizations.rowCount).toBe(0);
+  });
+
+  it("should roll back the entire registration if owner role assignment fails", async () => {
+    const failingRoleAssignmentRepository = {
+      assignOrganizationRole: async () => {
+        throw new Error("Owner role assignment failed");
+      },
+      assignProjectRole: async () => {
+        throw new Error("Unexpected project role assignment");
+      },
+    };
+
+    const failingUserService = new UserService(
+      userRepository,
+      organizationRepository,
+      organizationMemberRepository,
+      failingRoleAssignmentRepository as never,
+      authTokenRepository,
+      transactionManager,
+      passwordService,
+      tokenService
+    );
+
+    await expect(
+      failingUserService.register({
+        email: "role-rollback@example.com",
+        password: "StrongPassword123!",
+        displayName: "Role Rollback User",
+      })
+    ).rejects.toThrow("Owner role assignment failed");
+
+    const users = await testPool.query(
+      `SELECT id FROM users WHERE email = $1`,
+      ["role-rollback@example.com"]
+    );
+
+    const organizations = await testPool.query(
+      `SELECT id FROM organizations
+      WHERE name = $1`,
+      ["Role Rollback User's Workspace"]
+    );
+
+    const memberships = await testPool.query(
+      `SELECT organization_id, user_id
+      FROM organization_members
+      WHERE user_id IN (
+        SELECT id FROM users WHERE email = $1
+      )`,
+      ["role-rollback@example.com"]
+    );
+
+    const roleAssignments = await testPool.query(
+      `SELECT omr.organization_id, omr.user_id
+      FROM organization_member_roles omr
+      WHERE omr.user_id IN (
+        SELECT id FROM users WHERE email = $1
+      )`,
+      ["role-rollback@example.com"]
+    );
+
+    const tokens = await testPool.query(
+      `SELECT id FROM auth_tokens
+      WHERE user_id IN (
+        SELECT id FROM users WHERE email = $1
+      )`,
+      ["role-rollback@example.com"]
+    );
+
+    expect(users.rowCount).toBe(0);
+    expect(organizations.rowCount).toBe(0);
+    expect(memberships.rowCount).toBe(0);
+    expect(roleAssignments.rowCount).toBe(0);
+    expect(tokens.rowCount).toBe(0);
   });
 });

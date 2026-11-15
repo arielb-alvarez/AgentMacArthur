@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createOrganization: vi.fn(),
   createOrganizationMember: vi.fn(),
   createAuthToken: vi.fn(),
+  assignOrganizationRole: vi.fn(),
 }));
 
 vi.mock("../../src/auth/password.service.js", () => ({
@@ -63,6 +64,7 @@ describe("UserService", () => {
     mocks.createOrganization.mockResolvedValue(organization);
     mocks.createOrganizationMember.mockResolvedValue({});
     mocks.createAuthToken.mockResolvedValue({});
+    mocks.assignOrganizationRole.mockResolvedValue(undefined);
 
     mocks.runInTransaction.mockImplementation(
       async (
@@ -75,6 +77,9 @@ describe("UserService", () => {
       { create: mocks.createUser } as never,
       { create: mocks.createOrganization } as never,
       { create: mocks.createOrganizationMember } as never,
+      {
+        assignOrganizationRole: mocks.assignOrganizationRole,
+      } as never,
       { create: mocks.createAuthToken } as never,
       { runInTransaction: mocks.runInTransaction } as never,
       { hashPassword: mocks.hashPassword } as never,
@@ -133,6 +138,16 @@ describe("UserService", () => {
         tokenHash: generatedToken.tokenHash,
         expiresAt: expect.any(Date),
       }),
+      expect.any(Object)
+    );
+
+    expect(mocks.assignOrganizationRole).toHaveBeenCalledWith(
+      {
+        organizationId: organization.id,
+        userId: user.id,
+        roleKey: "owner",
+        assignedBy: user.id,
+      },
       expect.any(Object)
     );
   });
@@ -228,5 +243,21 @@ describe("UserService", () => {
         displayName: "Test User",
       })
     ).rejects.toThrow("Token persistence failed");
+  });
+
+  it("should fail registration when owner role assignment fails", async () => {
+    const assignmentError = new Error("Role assignment failed");
+
+    mocks.assignOrganizationRole.mockRejectedValue(assignmentError);
+
+    await expect(
+      service.register({
+        email: "test@example.com",
+        password: "password123",
+        displayName: "Test User",
+      })
+    ).rejects.toBe(assignmentError);
+
+    expect(mocks.createAuthToken).not.toHaveBeenCalled();
   });
 });

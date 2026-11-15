@@ -8,6 +8,7 @@ import type { UserRepository } from "./user.repository.js";
 import type { OrganizationRepository } from "../organizations/organization.repository.js";
 import type { OrganizationMemberRepository } from "../organization-members/organization-member.repository.js";
 import type { AuthTokenRepository } from "../auth-tokens/auth-token.repository.js";
+import type { RoleAssignmentRepository } from "../role-assignments/role-assignment.repository.js";
 import type { User } from "./user.types.js";
 
 export interface RegisterUserInput {
@@ -45,6 +46,7 @@ export class UserService {
     private readonly userRepository: UserRepository,
     private readonly organizationRepository: OrganizationRepository,
     private readonly organizationMemberRepository: OrganizationMemberRepository,
+    private readonly roleAssignmentRepository: RoleAssignmentRepository,
     private readonly authTokenRepository: AuthTokenRepository,
     private readonly transactionManager: TransactionManager,
     private readonly passwordService: PasswordService,
@@ -99,6 +101,16 @@ export class UserService {
               userId: user.id,
               role: "owner",
               status: "active",
+            },
+            client
+          );
+
+          await this.roleAssignmentRepository.assignOrganizationRole(
+            {
+              organizationId: organization.id,
+              userId: user.id,
+              roleKey: "owner",
+              assignedBy: user.id,
             },
             client
           );

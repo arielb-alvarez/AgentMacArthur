@@ -4,6 +4,7 @@ import type { TransactionManager } from "../database/transaction-manager.js";
 import type { OrganizationMemberRepository } from "../organization-members/organization-member.repository.js";
 import type { ProjectMemberRepository } from "../project-members/project-member.repository.js";
 import type { ProjectRepository } from "./project.repository.js";
+import type { RoleAssignmentRepository } from "../role-assignments/role-assignment.repository.js";
 
 import type {
   Project,
@@ -29,6 +30,7 @@ export class ProjectService {
     private readonly projectRepository: ProjectRepository,
     private readonly projectMemberRepository: ProjectMemberRepository,
     private readonly organizationMemberRepository: OrganizationMemberRepository,
+    private readonly roleAssignmentRepository: RoleAssignmentRepository,
     private readonly transactionManager: TransactionManager
   ) {}
 
@@ -73,6 +75,17 @@ export class ProjectService {
             userId,
             role: "project_owner",
             status: "active",
+          },
+          client
+        );
+
+        await this.roleAssignmentRepository.assignProjectRole(
+          {
+            projectId: project.id,
+            organizationId: project.organizationId,
+            userId,
+            roleKey: "project_owner",
+            assignedBy: userId,
           },
           client
         );

@@ -20,6 +20,7 @@ import { PostgresOrganizationRepository } from "../../src/organizations/postgres
 import { PostgresOrganizationMemberRepository } from "../../src/organization-members/postgres-organization-member.repository.js";
 import { PostgresProjectRepository } from "../../src/projects/postgres-project.repository.js";
 import { PostgresProjectMemberRepository } from "../../src/project-members/postgres-project-member.repository.js";
+import { PostgresRoleAssignmentRepository } from "../../src/role-assignments/postgres-role-assignment.repository.js";
 
 import { ProjectService } from "../../src/projects/project.service.js";
 
@@ -53,10 +54,17 @@ describe("ProjectService integration", () => {
       transactionManager
     );
 
+  const roleAssignmentRepository =
+    new PostgresRoleAssignmentRepository(
+      testPool,
+      transactionManager
+    );
+
   const projectService = new ProjectService(
     projectRepository,
     projectMemberRepository,
     organizationMemberRepository,
+    roleAssignmentRepository,
     transactionManager
   );
 
@@ -159,6 +167,26 @@ describe("ProjectService integration", () => {
     expect(membership).toBeDefined();
     expect(membership?.role).toBe("project_owner");
     expect(membership?.status).toBe("active");
+
+    const roleAssignment = await testPool.query<{
+      scope: string;
+      key: string;
+      assigned_by: string;
+    }>(
+      `SELECT r.scope, r.key, pmr.assigned_by
+      FROM project_member_roles pmr
+      INNER JOIN roles r ON r.id = pmr.role_id
+      WHERE pmr.project_id = $1
+        AND pmr.user_id = $2`,
+      [project.id, owner.id]
+    );
+
+    expect(roleAssignment.rows).toHaveLength(1);
+    expect(roleAssignment.rows[0]).toMatchObject({
+      scope: "project",
+      key: "project_owner",
+      assigned_by: owner.id,
+    });
   });
 
   it("should allow an active organization member to create a project", async () => {
@@ -527,6 +555,7 @@ describe("ProjectService integration", () => {
       projectRepository,
       failingProjectMemberRepository,
       organizationMemberRepository,
+      roleAssignmentRepository,
       transactionManager
     );
 
@@ -544,5 +573,67 @@ describe("ProjectService integration", () => {
     );
 
     expect(projects).toHaveLength(0);
+  });
+
+  it("should roll back project and membership creation if project owner role assignment fails", async () => {
+    const owner = await createUser("role-rollback@example.com");
+    const organization = await createOrganization(
+      owner.id,
+      "role-rollback-workspace"
+    );
+
+    const failingRoleAssignmentRepository = {
+      assignOrganizationRole:
+        roleAssignmentRepository.assignOrganizationRole.bind(
+          roleAssignmentRepository
+        ),
+      assignProjectRole: async () => {
+        throw new Error("Simulated project role assignment failure");
+      },
+    };
+
+    const failingService = new ProjectService(
+      projectRepository,
+      projectMemberRepository,
+      organizationMemberRepository,
+      failingRoleAssignmentRepository,
+      transactionManager
+    );
+
+    await expect(
+      failingService.create(owner.id, {
+        organizationId: organization.id,
+        name: "Role Rollback Project",
+      })
+    ).rejects.toThrow(
+      "Simulated project role assignment failure"
+    );
+
+    const projects = await projectRepository.findByOrganizationId(
+      organization.id
+    );
+
+    expect(projects).toHaveLength(0);
+
+    const memberships = await testPool.query(
+      `SELECT project_id
+      FROM project_members
+      WHERE organization_id = $1
+        AND user_id = $2`,
+      [organization.id, owner.id]
+    );
+
+    expect(memberships.rows).toHaveLength(0);
+
+    const roleAssignments = await testPool.query(
+      `SELECT pmr.project_id
+      FROM project_member_roles pmr
+      INNER JOIN projects p ON p.id = pmr.project_id
+      WHERE p.organization_id = $1`,
+      [organization.id]
+    );
+
+    expect(roleAssignments.rows).toHaveLength(0);
+    expect(memberships.rows).toHaveLength(0);
   });
 });

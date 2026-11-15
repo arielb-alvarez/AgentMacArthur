@@ -8,6 +8,7 @@ import { PostgresOrganizationRepository } from "../organizations/postgres-organi
 import { PostgresOrganizationMemberRepository } from "../organization-members/postgres-organization-member.repository.js";
 import { PostgresAuthTokenRepository } from "../auth-tokens/postgres-auth-token.repository.js";
 import { PostgresSessionRepository } from "../sessions/postgres-session.repository.js";
+import { PostgresRoleAssignmentRepository } from "../role-assignments/postgres-role-assignment.repository.js";
 
 import { PasswordService } from "../auth/password.service.js";
 import { TokenService } from "../auth/token.service.js";
@@ -41,6 +42,12 @@ const organizationMemberRepository =
     transactionManager
   );
 
+const roleAssignmentRepository =
+  new PostgresRoleAssignmentRepository(
+    pool,
+    transactionManager
+  );
+
 const authTokenRepository = new PostgresAuthTokenRepository(
   pool,
   transactionManager
@@ -60,6 +67,7 @@ const userService = new UserService(
   userRepository,
   organizationRepository,
   organizationMemberRepository,
+  roleAssignmentRepository,
   authTokenRepository,
   transactionManager,
   passwordService,
