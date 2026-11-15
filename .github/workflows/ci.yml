@@ -57,7 +57,10 @@ jobs:
         env:
           PGPASSWORD: ci_test_password
 
-      - name: Run database migrations
+      - name: Run application database migrations
+        run: npm run migrate
+
+      - name: Run test database migrations
         run: npm run migrate
         env:
           DB_NAME: agentmacarthur_test
