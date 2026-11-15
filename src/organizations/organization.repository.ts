@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import type {
   CreateOrganizationInput,
   Organization,
+  UpdateOrganizationInput,
 } from "./organization.types.js";
 
 export interface OrganizationRepository {
@@ -23,6 +24,17 @@ export interface OrganizationRepository {
 
   findPersonalByOwnerId(
     ownerUserId: string,
+    client?: PoolClient
+  ): Promise<Organization | undefined>;
+
+  findByUserId(
+    userId: string,
+    client?: PoolClient
+  ): Promise<Organization[]>;
+
+  update(
+    id: string,
+    input: UpdateOrganizationInput,
     client?: PoolClient
   ): Promise<Organization | undefined>;
 }

@@ -192,4 +192,59 @@ describe("PostgresOrganizationRepository", () => {
       repository.create(createOrganizationInput(user.id))
     ).rejects.toThrow();
   });
+
+  it("should find organizations where the user has active membership", async () => {
+    const owner = await createOwner();
+
+    const organization = await createPersonalOrganization(owner.id);
+
+    const memberships = await repository.findByUserId(owner.id);
+
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]?.id).toBe(organization.id);
+  });
+
+  it("should not return organizations where the user's membership is suspended", async () => {
+    const owner = await createOwner();
+
+    const organization = await createPersonalOrganization(owner.id);
+
+    await testPool.query(
+      `UPDATE organization_members
+       SET status = 'suspended'
+       WHERE organization_id = $1
+         AND user_id = $2`,
+      [organization.id, owner.id]
+    );
+
+    const memberships = await repository.findByUserId(owner.id);
+
+    expect(memberships).toEqual([]);
+  });
+
+  it("should update an organization's name", async () => {
+    const owner = await createOwner();
+
+    const organization = await createPersonalOrganization(owner.id);
+
+    const updated = await repository.update(organization.id, {
+      name: "Updated Workspace",
+    });
+
+    expect(updated?.name).toBe("Updated Workspace");
+    expect(updated?.slug).toBe(organization.slug);
+    expect(updated?.ownerUserId).toBe(owner.id);
+    expect(updated?.updatedAt.getTime()).toBeGreaterThanOrEqual(
+      organization.updatedAt.getTime()
+    );
+  });
+
+  it("should return undefined when updating an unknown organization", async () => {
+    const result = await repository.update(
+      "00000000-0000-4000-8000-000000000001",
+      { name: "Updated Workspace" }
+    );
+
+    expect(result).toBeUndefined();
+  });
 });

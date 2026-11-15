@@ -12,6 +12,7 @@ import type {
   CreateOrganizationInput,
   Organization,
   OrganizationType,
+  UpdateOrganizationInput,
 } from "./organization.types.js";
 
 interface OrganizationRow {
@@ -181,6 +182,72 @@ export class PostgresOrganizationRepository
           WHERE owner_user_id = $1
             AND type = 'personal'`,
           [ownerUserId]
+        );
+
+        const row = result.rows[0];
+
+        return row ? this.mapOrganization(row) : undefined;
+      },
+      client
+    );
+  }
+
+  async findByUserId(
+    userId: string,
+    client?: PoolClient
+  ): Promise<Organization[]> {
+    return this.execute(
+      "findOrganizationsByUser",
+      async (connection) => {
+        const result = await connection.query<OrganizationRow>(
+          `SELECT
+            o.id,
+            o.name,
+            o.slug,
+            o.type,
+            o.owner_user_id,
+            o.created_at,
+            o.updated_at
+          FROM organizations o
+          INNER JOIN organization_members om
+            ON om.organization_id = o.id
+          WHERE om.user_id = $1
+            AND om.status = 'active'
+          ORDER BY o.created_at DESC, o.id ASC`,
+          [userId]
+        );
+
+        return result.rows.map((row) =>
+          this.mapOrganization(row)
+        );
+      },
+      client
+    );
+  }
+
+  async update(
+    id: string,
+    input: UpdateOrganizationInput,
+    client?: PoolClient
+  ): Promise<Organization | undefined> {
+    return this.execute(
+      "updateOrganization",
+      async (connection) => {
+        const result = await connection.query<OrganizationRow>(
+          `UPDATE organizations
+          SET
+            name = COALESCE($2, name),
+            updated_at = NOW()
+          WHERE id = $1
+          RETURNING
+            id,
+            name,
+            slug,
+            type,
+            owner_user_id,
+            created_at,
+            updated_at`,
+          [id, input.name?.trim() ?? null]
         );
 
         const row = result.rows[0];

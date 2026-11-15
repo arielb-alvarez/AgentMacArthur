@@ -37,6 +37,11 @@ const options: swaggerJsdoc.Options = {
         description:
           "Project creation, discovery, access, and management.",
       },
+      {
+        name: "Organizations",
+        description:
+          "Organization discovery, access, and management.",
+      },
     ],
 
     components: {
@@ -285,6 +290,20 @@ const options: swaggerJsdoc.Options = {
               type: "string",
               maxLength: 10000,
               nullable: true,
+            },
+          },
+        },
+
+        UpdateOrganizationRequest: {
+          type: "object",
+          additionalProperties: false,
+          minProperties: 1,
+          properties: {
+            name: {
+              type: "string",
+              minLength: 1,
+              maxLength: 150,
+              example: "My Development Team",
             },
           },
         },

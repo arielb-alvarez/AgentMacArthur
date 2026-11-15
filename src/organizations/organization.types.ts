@@ -16,3 +16,7 @@ export interface CreateOrganizationInput {
   type: OrganizationType;
   ownerUserId: string;
 }
+
+export interface UpdateOrganizationInput {
+  name?: string;
+}
