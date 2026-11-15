@@ -43,6 +43,12 @@ const envSchema = z
           .filter(Boolean)
       ),
 
+    FRONTEND_URL: z
+      .string()
+      .trim()
+      .url()
+      .default("http://localhost:4200"),
+
     DB_HOST: z.string().trim().min(1).default("localhost"),
 
     DB_PORT: z.coerce
@@ -63,6 +69,12 @@ const envSchema = z
       .trim()
       .min(1)
       .default("agentmacarthur_test"),
+
+    DB_MIGRATION_TEST_NAME: z
+      .string()
+      .trim()
+      .min(1)
+      .default("agentmacarthur_migration_test"),
 
     // PostgreSQL connection pool configuration.
     DB_POOL_MAX: z.coerce
@@ -176,6 +188,42 @@ const envSchema = z
           });
         }
       }
+
+      try {
+        const frontendUrl = new URL(config.FRONTEND_URL);
+
+        if (
+          frontendUrl.protocol !== "https:" ||
+          frontendUrl.origin !== config.FRONTEND_URL ||
+          frontendUrl.username !== "" ||
+          frontendUrl.password !== ""
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["FRONTEND_URL"],
+            message:
+              "FRONTEND_URL must be an exact HTTPS origin without a path or credentials.",
+          });
+        }
+
+        if (
+          ["localhost", "127.0.0.1", "[::1]"].includes(
+            frontendUrl.hostname
+          )
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["FRONTEND_URL"],
+            message: "Localhost frontend URLs are not allowed in production.",
+          });
+        }
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          path: ["FRONTEND_URL"],
+          message: "FRONTEND_URL must be a valid URL.",
+        });
+      }
     }
 
     if (config.DB_NAME === config.DB_TEST_NAME) {
@@ -183,6 +231,24 @@ const envSchema = z
         code: "custom",
         path: ["DB_TEST_NAME"],
         message: "DB_TEST_NAME must be different from DB_NAME.",
+      });
+    }
+
+    if (config.DB_NAME === config.DB_MIGRATION_TEST_NAME) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["DB_MIGRATION_TEST_NAME"],
+        message:
+          "DB_MIGRATION_TEST_NAME must be different from DB_NAME.",
+      });
+    }
+
+    if (config.DB_TEST_NAME === config.DB_MIGRATION_TEST_NAME) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["DB_MIGRATION_TEST_NAME"],
+        message:
+          "DB_MIGRATION_TEST_NAME must be different from DB_TEST_NAME.",
       });
     }
   });

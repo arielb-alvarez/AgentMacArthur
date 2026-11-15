@@ -228,6 +228,7 @@ describe("Environment configuration", () => {
       AGENT_PROVIDER: "openai",
       OPENAI_API_KEY: "sk-test-valid-key",
       CORS_ORIGINS: "https://app.example.com",
+      FRONTEND_URL: "https://app.example.com",
     });
 
     expect(env.NODE_ENV).toBe("production");
@@ -274,5 +275,63 @@ describe("Environment configuration", () => {
     ).rejects.toThrow(
       "Each CORS entry must be an exact HTTP or HTTPS origin"
     );
+  });
+
+  it("should use the default frontend URL", async () => {
+    const env = await loadEnv();
+
+    expect(env.FRONTEND_URL).toBe("http://localhost:4200");
+  });
+
+  it("should accept a custom frontend URL", async () => {
+    const env = await loadEnv({
+      FRONTEND_URL: "https://app.example.com",
+    });
+
+    expect(env.FRONTEND_URL).toBe("https://app.example.com");
+  });
+
+  it("should reject an invalid frontend URL", async () => {
+    await expect(
+      loadEnv({
+        FRONTEND_URL: "not-a-valid-url",
+      })
+    ).rejects.toThrow("FRONTEND_URL");
+  });
+
+  it("should reject HTTP frontend URLs in production", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "https://app.example.com",
+        FRONTEND_URL: "http://app.example.com",
+      })
+    ).rejects.toThrow("FRONTEND_URL must be an exact HTTPS origin");
+  });
+
+  it("should reject frontend URLs containing paths in production", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "https://app.example.com",
+        FRONTEND_URL: "https://app.example.com/dashboard",
+      })
+    ).rejects.toThrow("FRONTEND_URL must be an exact HTTPS origin");
+  });
+
+  it("should reject localhost frontend URLs in production", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "https://app.example.com",
+        FRONTEND_URL: "https://localhost:4200",
+      })
+    ).rejects.toThrow("Localhost frontend URLs are not allowed");
   });
 });

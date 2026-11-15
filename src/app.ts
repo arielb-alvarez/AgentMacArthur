@@ -1,4 +1,3 @@
-
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
@@ -7,6 +6,7 @@ import { env } from "./config/env.js";
 
 import healthRouter from "./routes/health.routes.js";
 import agentRouter from "./routes/agent.routes.js";
+import authRouter from "./routes/auth.routes.js";
 
 import { errorMiddleware } from "./middleware/error.middleware.js";
 import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
@@ -36,8 +36,12 @@ export const createApp = () => {
         callback(null, false);
       },
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Request-ID"],
-      credentials: false,
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Request-ID",
+      ],
+      credentials: true,
       maxAge: 600,
     })
   );
@@ -58,6 +62,8 @@ export const createApp = () => {
   app.use("/health", healthRouter);
 
   app.use("/api", apiRateLimiter);
+
+  app.use("/api/auth", authRouter);
 
   app.use("/api/agent", agentRouter);
 

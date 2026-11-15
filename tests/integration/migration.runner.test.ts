@@ -1,22 +1,43 @@
-
-import { describe, it, expect } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+} from "vitest";
 import path from "node:path";
 
-import { testPool } from "../../src/config/test-database.js";
+import { migrationTestPool } from "../../src/config/migration-test-database.js";
 import {
   runMigrations,
   getMigrationStatus,
 } from "../../src/database/migration.runner.js";
 
+const baselineMigrationsDirectory = path.resolve(
+  "tests/fixtures/baseline-migrations"
+);
+
 describe("Migration Runner", () => {
+  beforeAll(async () => {
+    await runMigrations(migrationTestPool, {
+      migrationsDirectory: baselineMigrationsDirectory,
+    });
+  });
+
+  afterAll(async () => {
+    await migrationTestPool.end();
+  });
+
   it("should skip migrations that have already been executed", async () => {
-    const before = await testPool.query<{ name: string }>(
+    const before = await migrationTestPool.query<{ name: string }>(
       `SELECT name FROM schema_migrations ORDER BY id ASC`
     );
 
-    await runMigrations(testPool);
+    await runMigrations(migrationTestPool, {
+      migrationsDirectory: baselineMigrationsDirectory,
+    });
 
-    const after = await testPool.query<{ name: string }>(
+    const after = await migrationTestPool.query<{ name: string }>(
       `SELECT name FROM schema_migrations ORDER BY id ASC`
     );
 
@@ -32,16 +53,20 @@ describe("Migration Runner", () => {
     );
 
     await expect(
-      runMigrations(testPool, { migrationsDirectory })
+      runMigrations(migrationTestPool, { migrationsDirectory })
     ).rejects.toThrow();
 
-    const tableResult = await testPool.query<{ exists: string | null }>(
+    const tableResult = await migrationTestPool.query<{
+      exists: string | null;
+    }>(
       `
         SELECT to_regclass('public.migration_rollback_test') AS exists;
       `
     );
 
-    const migrationResult = await testPool.query<{ name: string }>(
+    const migrationResult = await migrationTestPool.query<{
+      name: string;
+    }>(
       `
         SELECT name
         FROM schema_migrations
@@ -58,22 +83,24 @@ describe("Migration Runner", () => {
       "tests/fixtures/concurrent-migrations"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       "DROP TABLE IF EXISTS migration_concurrency_test"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       `DELETE FROM schema_migrations
        WHERE name = '001_concurrency_test.sql'`
     );
 
     try {
       await Promise.all([
-        runMigrations(testPool, { migrationsDirectory }),
-        runMigrations(testPool, { migrationsDirectory }),
+        runMigrations(migrationTestPool, { migrationsDirectory }),
+        runMigrations(migrationTestPool, { migrationsDirectory }),
       ]);
 
-      const migrationResult = await testPool.query<{ count: string }>(
+      const migrationResult = await migrationTestPool.query<{
+        count: string;
+      }>(
         `
           SELECT COUNT(*)::text AS count
           FROM schema_migrations
@@ -81,7 +108,9 @@ describe("Migration Runner", () => {
         `
       );
 
-      const tableResult = await testPool.query<{ exists: string | null }>(
+      const tableResult = await migrationTestPool.query<{
+        exists: string | null;
+      }>(
         `
           SELECT to_regclass('public.migration_concurrency_test') AS exists;
         `
@@ -92,11 +121,11 @@ describe("Migration Runner", () => {
         "migration_concurrency_test"
       );
     } finally {
-      await testPool.query(
+      await migrationTestPool.query(
         "DROP TABLE IF EXISTS migration_concurrency_test"
       );
 
-      await testPool.query(
+      await migrationTestPool.query(
         `DELETE FROM schema_migrations
          WHERE name = '001_concurrency_test.sql'`
       );
@@ -112,29 +141,31 @@ describe("Migration Runner", () => {
       "tests/fixtures/checksum-migrations/modified"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       "DROP TABLE IF EXISTS migration_checksum_test"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       `DELETE FROM schema_migrations
        WHERE name = '001_checksum_test.sql'`
     );
 
     try {
-      await runMigrations(testPool, {
+      await runMigrations(migrationTestPool, {
         migrationsDirectory: initialMigrationsDirectory,
       });
 
       await expect(
-        runMigrations(testPool, {
+        runMigrations(migrationTestPool, {
           migrationsDirectory: modifiedMigrationsDirectory,
         })
       ).rejects.toThrow(
         "Migration checksum mismatch: 001_checksum_test.sql"
       );
 
-      const columnResult = await testPool.query<{ column_name: string }>(
+      const columnResult = await migrationTestPool.query<{
+        column_name: string;
+      }>(
         `
           SELECT column_name
           FROM information_schema.columns
@@ -149,11 +180,11 @@ describe("Migration Runner", () => {
       expect(columnNames).toContain("id");
       expect(columnNames).not.toContain("description");
     } finally {
-      await testPool.query(
+      await migrationTestPool.query(
         "DROP TABLE IF EXISTS migration_checksum_test"
       );
 
-      await testPool.query(
+      await migrationTestPool.query(
         `DELETE FROM schema_migrations
          WHERE name = '001_checksum_test.sql'`
       );
@@ -169,29 +200,31 @@ describe("Migration Runner", () => {
       "tests/fixtures/deleted-migrations/remaining"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       "DROP TABLE IF EXISTS migration_deleted_test"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       `DELETE FROM schema_migrations
        WHERE name = '001_deleted_test.sql'`
     );
 
     try {
-      await runMigrations(testPool, {
+      await runMigrations(migrationTestPool, {
         migrationsDirectory: initialMigrationsDirectory,
       });
 
       await expect(
-        runMigrations(testPool, {
+        runMigrations(migrationTestPool, {
           migrationsDirectory: remainingMigrationsDirectory,
         })
       ).rejects.toThrow(
         "Missing migration files: 001_deleted_test.sql"
       );
 
-      const tableResult = await testPool.query<{ exists: string | null }>(
+      const tableResult = await migrationTestPool.query<{
+        exists: string | null;
+      }>(
         `
           SELECT to_regclass('public.migration_deleted_test') AS exists;
         `
@@ -201,11 +234,11 @@ describe("Migration Runner", () => {
         "migration_deleted_test"
       );
     } finally {
-      await testPool.query(
+      await migrationTestPool.query(
         "DROP TABLE IF EXISTS migration_deleted_test"
       );
 
-      await testPool.query(
+      await migrationTestPool.query(
         `DELETE FROM schema_migrations
          WHERE name = '001_deleted_test.sql'`
       );
@@ -215,7 +248,7 @@ describe("Migration Runner", () => {
   // Migration Status Tests
 
   it("should report executed migrations", async () => {
-    const migrations = await getMigrationStatus(testPool);
+    const migrations = await getMigrationStatus(migrationTestPool);
 
     const migration = migrations.find(
       (item) => item.name === "001_create_conversations.sql"
@@ -231,7 +264,7 @@ describe("Migration Runner", () => {
       "tests/fixtures/migrations"
     );
 
-    const migrations = await getMigrationStatus(testPool, {
+    const migrations = await getMigrationStatus(migrationTestPool, {
       migrationsDirectory,
     });
 
@@ -252,21 +285,21 @@ describe("Migration Runner", () => {
       "tests/fixtures/checksum-migrations/modified"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       "DROP TABLE IF EXISTS migration_checksum_test"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       `DELETE FROM schema_migrations
        WHERE name = '001_checksum_test.sql'`
     );
 
     try {
-      await runMigrations(testPool, {
+      await runMigrations(migrationTestPool, {
         migrationsDirectory: initialMigrationsDirectory,
       });
 
-      const migrations = await getMigrationStatus(testPool, {
+      const migrations = await getMigrationStatus(migrationTestPool, {
         migrationsDirectory: modifiedMigrationsDirectory,
       });
 
@@ -281,11 +314,11 @@ describe("Migration Runner", () => {
         migration?.expectedChecksum
       );
     } finally {
-      await testPool.query(
+      await migrationTestPool.query(
         "DROP TABLE IF EXISTS migration_checksum_test"
       );
 
-      await testPool.query(
+      await migrationTestPool.query(
         `DELETE FROM schema_migrations
          WHERE name = '001_checksum_test.sql'`
       );
@@ -301,21 +334,21 @@ describe("Migration Runner", () => {
       "tests/fixtures/deleted-migrations/remaining"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       "DROP TABLE IF EXISTS migration_deleted_test"
     );
 
-    await testPool.query(
+    await migrationTestPool.query(
       `DELETE FROM schema_migrations
        WHERE name = '001_deleted_test.sql'`
     );
 
     try {
-      await runMigrations(testPool, {
+      await runMigrations(migrationTestPool, {
         migrationsDirectory: initialMigrationsDirectory,
       });
 
-      const migrations = await getMigrationStatus(testPool, {
+      const migrations = await getMigrationStatus(migrationTestPool, {
         migrationsDirectory: remainingMigrationsDirectory,
       });
 
@@ -327,11 +360,11 @@ describe("Migration Runner", () => {
       expect(migration?.status).toBe("MISSING FILE");
       expect(migration?.checksum).toHaveLength(64);
     } finally {
-      await testPool.query(
+      await migrationTestPool.query(
         "DROP TABLE IF EXISTS migration_deleted_test"
       );
 
-      await testPool.query(
+      await migrationTestPool.query(
         `DELETE FROM schema_migrations
          WHERE name = '001_deleted_test.sql'`
       );
