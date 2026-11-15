@@ -237,7 +237,6 @@ describe("UserService integration", () => {
     );
 
     const failingAuthTokenRepository = {
-      ...authTokenRepository,
       create: async (
         input: Parameters<typeof authTokenRepository.create>[0],
         client?: Parameters<typeof authTokenRepository.create>[1]
@@ -250,6 +249,21 @@ describe("UserService integration", () => {
           client
         );
       },
+
+      findActiveByTokenHash:
+        authTokenRepository.findActiveByTokenHash.bind(
+          authTokenRepository
+        ),
+
+      consume:
+        authTokenRepository.consume.bind(
+          authTokenRepository
+        ),
+
+      invalidateActiveByUserAndPurpose:
+        authTokenRepository.invalidateActiveByUserAndPurpose.bind(
+          authTokenRepository
+        ),
     };
 
     const failingUserService = new UserService(
