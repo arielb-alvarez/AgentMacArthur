@@ -1,43 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { createAgentController } from "../../src/controllers/agent.controller.js";
-
-import type { AgentProvider } from "../../src/agent/agent-provider.js";
-import type { ConversationService } from "../../src/conversations/conversation.service.js";
-import type { Conversation } from "../../src/conversations/conversation.types.js";
+import type { AgentChatService } from "../../src/agent/agent-chat.service.js";
 
 describe("Agent Controller", () => {
-  const createMockConversation = (): Conversation => ({
-    id: "test-conversation-id",
-    messages: [
-      {
-        role: "user",
-        content: "Hello AgentMacArthur",
-      },
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
   it("should return a successful response", async () => {
-    const fakeProvider: AgentProvider = {
-      generateChatResponse: vi.fn().mockResolvedValue(
-        "Hello from test provider"
-      ),
-    };
+    const chatMock = vi.fn().mockResolvedValue({
+      conversationId: "test-conversation-id",
+      response: "Hello from test provider",
+    });
 
-    const mockConversation = createMockConversation();
+    const fakeAgentChatService = {
+      chat: chatMock,
+    } as unknown as AgentChatService;
 
-    const fakeConversationService = {
-      createConversation: vi.fn().mockResolvedValue(mockConversation),
-      getConversation: vi.fn().mockResolvedValue(mockConversation),
-      addMessage: vi.fn().mockResolvedValue(mockConversation),
-    } as unknown as ConversationService;
-
-    const controller = createAgentController(
-      fakeProvider,
-      fakeConversationService
-    );
+    const controller = createAgentController(fakeAgentChatService);
 
     const req = {
       body: {
@@ -54,54 +31,31 @@ describe("Agent Controller", () => {
 
     await controller.chat(req, res, next);
 
-    expect(fakeConversationService.createConversation).toHaveBeenCalledOnce();
-
-    expect(fakeConversationService.addMessage).toHaveBeenCalledWith(
-      mockConversation.id,
-      {
-        role: "user",
-        content: "Hello AgentMacArthur",
-      }
-    );
-
-    expect(fakeProvider.generateChatResponse).toHaveBeenCalledWith([
-      {
-        role: "user",
-        content: "Hello AgentMacArthur",
-      },
-    ]);
+    expect(chatMock).toHaveBeenCalledOnce();
+    expect(chatMock).toHaveBeenCalledWith({
+      message: "Hello AgentMacArthur",
+    });
 
     expect(res.status).toHaveBeenCalledWith(200);
 
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       agent: "AgentMacArthur",
-      conversationId: mockConversation.id,
+      conversationId: "test-conversation-id",
       response: "Hello from test provider",
     });
 
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("should forward provider errors to next middleware", async () => {
-    const providerError = new Error("AI provider failed");
+  it("should forward service errors to next middleware", async () => {
+    const serviceError = new Error("Agent chat failed");
 
-    const failingProvider: AgentProvider = {
-      generateChatResponse: vi.fn().mockRejectedValue(providerError),
-    };
+    const fakeAgentChatService = {
+      chat: vi.fn().mockRejectedValue(serviceError),
+    } as unknown as AgentChatService;
 
-    const mockConversation = createMockConversation();
-
-    const fakeConversationService = {
-      createConversation: vi.fn().mockResolvedValue(mockConversation),
-      getConversation: vi.fn().mockResolvedValue(mockConversation),
-      addMessage: vi.fn().mockResolvedValue(mockConversation),
-    } as unknown as ConversationService;
-
-    const controller = createAgentController(
-      failingProvider,
-      fakeConversationService
-    );
+    const controller = createAgentController(fakeAgentChatService);
 
     const req = {
       body: {
@@ -118,7 +72,7 @@ describe("Agent Controller", () => {
 
     await controller.chat(req, res, next);
 
-    expect(next).toHaveBeenCalledWith(providerError);
+    expect(next).toHaveBeenCalledWith(serviceError);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
   });
