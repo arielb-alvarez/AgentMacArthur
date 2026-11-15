@@ -183,4 +183,96 @@ describe("Environment configuration", () => {
       })
     ).rejects.toThrow("DB_TEST_NAME must be different");
   });
+
+  it("should reject the mock provider in production", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "mock",
+        CORS_ORIGINS: "https://app.example.com",
+      })
+    ).rejects.toThrow(
+      "AGENT_PROVIDER must be openai in production"
+    );
+  });
+
+  it("should reject localhost CORS origins in production", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "http://localhost:4200",
+      })
+    ).rejects.toThrow(
+      "Localhost origins are not allowed in production"
+    );
+  });
+
+  it("should reject empty CORS origins in production", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "",
+      })
+    ).rejects.toThrow(
+      "At least one frontend origin must be configured in production"
+    );
+  });
+
+  it("should accept valid production configuration", async () => {
+    const env = await loadEnv({
+      NODE_ENV: "production",
+      AGENT_PROVIDER: "openai",
+      OPENAI_API_KEY: "sk-test-valid-key",
+      CORS_ORIGINS: "https://app.example.com",
+    });
+
+    expect(env.NODE_ENV).toBe("production");
+    expect(env.AGENT_PROVIDER).toBe("openai");
+    expect(env.CORS_ORIGINS).toEqual([
+      "https://app.example.com",
+    ]);
+  });
+
+  it("should reject CORS origins containing paths", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "https://app.example.com/dashboard",
+      })
+    ).rejects.toThrow(
+      "Each CORS entry must be an exact HTTP or HTTPS origin"
+    );
+  });
+
+  it("should reject non-HTTP production CORS origins", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "ftp://app.example.com",
+      })
+    ).rejects.toThrow(
+      "Each CORS entry must be an exact HTTP or HTTPS origin"
+    );
+  });
+
+  it("should reject CORS origins containing credentials", async () => {
+    await expect(
+      loadEnv({
+        NODE_ENV: "production",
+        AGENT_PROVIDER: "openai",
+        OPENAI_API_KEY: "sk-test-valid-key",
+        CORS_ORIGINS: "https://user:pass@app.example.com",
+      })
+    ).rejects.toThrow(
+      "Each CORS entry must be an exact HTTP or HTTPS origin"
+    );
+  });
 });

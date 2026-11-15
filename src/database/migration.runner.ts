@@ -1,7 +1,7 @@
-
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import path from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { Pool, PoolClient } from "pg";
 
@@ -29,10 +29,12 @@ export interface MigrationStatus {
   expectedChecksum?: string;
 }
 
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+
 const getMigrationsDirectory = (
   directory?: string
 ): string => {
-  return directory ?? path.resolve("src/database/migrations");
+  return directory ?? resolve(moduleDirectory, "migrations");
 };
 
 const getMigrationFiles = async (
@@ -88,7 +90,7 @@ export const getMigrationStatus = async (
   const statuses: MigrationStatus[] = [];
 
   for (const migrationFile of migrationFiles) {
-    const migrationPath = path.join(
+    const migrationPath = join(
       migrationsDirectory,
       migrationFile
     );
@@ -275,7 +277,7 @@ export const runMigrations = async (
     let executedCount = 0;
 
     for (const migrationFile of migrationFiles) {
-      const migrationPath = path.join(
+      const migrationPath = join(
         migrationsDirectory,
         migrationFile
       );

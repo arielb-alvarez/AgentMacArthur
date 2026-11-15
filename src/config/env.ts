@@ -121,6 +121,63 @@ const envSchema = z
       }
     }
 
+    if (config.NODE_ENV === "production") {
+      if (config.AGENT_PROVIDER !== "openai") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["AGENT_PROVIDER"],
+          message:
+            "AGENT_PROVIDER must be openai in production.",
+        });
+      }
+
+      if (config.CORS_ORIGINS.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["CORS_ORIGINS"],
+          message:
+            "At least one frontend origin must be configured in production.",
+        });
+      }
+
+      for (const origin of config.CORS_ORIGINS) {
+        try {
+          const url = new URL(origin);
+
+          if (
+            !["http:", "https:"].includes(url.protocol) ||
+            url.origin !== origin ||
+            url.username !== "" ||
+            url.password !== ""
+          ) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["CORS_ORIGINS"],
+              message:
+                "Each CORS entry must be an exact HTTP or HTTPS origin without a path.",
+            });
+          }
+
+          if (
+            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+          ) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["CORS_ORIGINS"],
+              message:
+                "Localhost origins are not allowed in production.",
+            });
+          }
+        } catch {
+          ctx.addIssue({
+            code: "custom",
+            path: ["CORS_ORIGINS"],
+            message: "Production CORS origins must be valid URLs.",
+          });
+        }
+      }
+    }
+
     if (config.DB_NAME === config.DB_TEST_NAME) {
       ctx.addIssue({
         code: "custom",
