@@ -402,7 +402,7 @@ describe("Migration Runner", () => {
   });
 
 
-  it("should migrate legacy memberships into the role and permission foundation", async () => {
+  it("should migrate legacy memberships and invitations into the role and permission foundations", async () => {
     const roleBaselineDirectory = path.resolve(
       "tests/fixtures/role-migrations/baseline"
     );
@@ -555,6 +555,76 @@ describe("Migration Runner", () => {
         );
       }
 
+      // Create legacy invitations before Migration 004 and 005.
+      // Migration 005 must backfill their string-based roles.
+      await client.query(
+        `
+          INSERT INTO invitations (
+            id,
+            organization_id,
+            project_id,
+            email,
+            role,
+            token_hash,
+            invited_by,
+            accepted_by,
+            status,
+            expires_at,
+            accepted_at,
+            created_at
+          )
+          VALUES
+            (
+              '40000000-0000-4000-8000-000000000001',
+              $1,
+              NULL,
+              'accepted-admin@example.com',
+              'admin',
+              REPEAT('a', 64),
+              $2,
+              $3,
+              'accepted',
+              NOW() + INTERVAL '7 days',
+              NOW() - INTERVAL '1 hour',
+              NOW() - INTERVAL '2 days'
+            ),
+            (
+              '40000000-0000-4000-8000-000000000002',
+              $1,
+              NULL,
+              'expired-member@example.com',
+              'member',
+              REPEAT('b', 64),
+              $2,
+              NULL,
+              'pending',
+              NOW() - INTERVAL '1 day',
+              NULL,
+              NOW() - INTERVAL '2 days'
+            ),
+            (
+              '40000000-0000-4000-8000-000000000003',
+              $1,
+              $4,
+              'project-manager@example.com',
+              'project_manager',
+              REPEAT('c', 64),
+              $2,
+              NULL,
+              'pending',
+              NOW() + INTERVAL '7 days',
+              NULL,
+              NOW()
+            )
+        `,
+        [
+          organizationId,
+          userIds[0],
+          userIds[1],
+          projectId,
+        ]
+      );
+
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -564,7 +634,7 @@ describe("Migration Runner", () => {
     }
 
     // Apply the actual source migration directory.
-    // Migrations 001–003 should be skipped; 004 should execute.
+    // Migrations 001–003 should be skipped; 004 and 005 should execute.
     await runMigrations(migrationTestPool, {
       migrationsDirectory: sourceMigrationsDirectory,
     });
@@ -619,6 +689,343 @@ describe("Migration Runner", () => {
     expect(
       projectRoles.rows.map((row) => row.role_key)
     ).toEqual(legacyProjectRoles);
+
+    // Verify invitation role backfill and expiration handling.
+    const invitationResults = await migrationTestPool.query<{
+      email: string;
+      role_key: string;
+      status: string;
+      email_delivery_status: string;
+      accepted_by: string | null;
+      accepted_at: Date | null;
+    }>(
+      `
+        SELECT
+          i.email,
+          r.key AS role_key,
+          i.status,
+          i.email_delivery_status,
+          i.accepted_by,
+          i.accepted_at
+        FROM invitations i
+        JOIN roles r ON r.id = i.role_id
+        ORDER BY i.email
+      `
+    );
+
+    expect(invitationResults.rows).toHaveLength(3);
+
+    expect(invitationResults.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          email: "accepted-admin@example.com",
+          role_key: "admin",
+          status: "accepted",
+          email_delivery_status: "unknown",
+        }),
+        expect.objectContaining({
+          email: "expired-member@example.com",
+          role_key: "member",
+          status: "expired",
+          email_delivery_status: "unknown",
+          accepted_by: null,
+          accepted_at: null,
+        }),
+        expect.objectContaining({
+          email: "project-manager@example.com",
+          role_key: "project_manager",
+          status: "pending",
+          email_delivery_status: "unknown",
+        }),
+      ])
+    );
+
+    const acceptedInvitation = invitationResults.rows.find(
+      (row) => row.email === "accepted-admin@example.com"
+    );
+
+    expect(acceptedInvitation?.accepted_by).toBe(userIds[1]);
+    expect(acceptedInvitation?.accepted_at).not.toBeNull();
+
+    // The legacy role column must no longer exist.
+    const legacyRoleColumn = await migrationTestPool.query<{
+      exists: boolean;
+    }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'invitations'
+            AND column_name = 'role'
+        ) AS exists
+      `
+    );
+
+    expect(legacyRoleColumn.rows[0].exists).toBe(false);
+
+    // Organization invitations must not grant ownership.
+    await expect(
+      migrationTestPool.query(
+        `
+          INSERT INTO invitations (
+            id,
+            organization_id,
+            email,
+            role_id,
+            token_hash,
+            invited_by,
+            expires_at
+          )
+          SELECT
+            '40000000-0000-4000-8000-000000000004',
+            $1,
+            'owner-invite@example.com',
+            id,
+            REPEAT('d', 64),
+            $2,
+            NOW() + INTERVAL '7 days'
+          FROM roles
+          WHERE scope = 'organization'
+            AND key = 'owner'
+            AND is_system = TRUE
+        `,
+        [organizationId, userIds[0]]
+      )
+    ).rejects.toThrow();
+
+    // Organization invitations must not use project roles.
+    await expect(
+      migrationTestPool.query(
+        `
+          INSERT INTO invitations (
+            id,
+            organization_id,
+            email,
+            role_id,
+            token_hash,
+            invited_by,
+            expires_at
+          )
+          SELECT
+            '40000000-0000-4000-8000-000000000005',
+            $1,
+            'wrong-scope@example.com',
+            id,
+            REPEAT('e', 64),
+            $2,
+            NOW() + INTERVAL '7 days'
+          FROM roles
+          WHERE scope = 'project'
+            AND key = 'developer'
+            AND is_system = TRUE
+        `,
+        [organizationId, userIds[0]]
+      )
+    ).rejects.toThrow();
+
+    // Project invitations must not use organization roles.
+    await expect(
+      migrationTestPool.query(
+        `
+          INSERT INTO invitations (
+            id,
+            organization_id,
+            project_id,
+            email,
+            role_id,
+            token_hash,
+            invited_by,
+            expires_at
+          )
+          SELECT
+            '40000000-0000-4000-8000-000000000006',
+            $1,
+            $2,
+            'wrong-project-scope@example.com',
+            id,
+            REPEAT('f', 64),
+            $3,
+            NOW() + INTERVAL '7 days'
+          FROM roles
+          WHERE scope = 'organization'
+            AND key = 'member'
+            AND is_system = TRUE
+        `,
+        [organizationId, projectId, userIds[0]]
+      )
+    ).rejects.toThrow();
+
+    // Create another organization with a custom role.
+    // That role must not be usable by invitations in this organization.
+    const otherOrganizationId =
+      "20000000-0000-4000-8000-000000000002";
+
+    const otherCustomRoleId =
+      "50000000-0000-4000-8000-000000000001";
+
+    await migrationTestPool.query("BEGIN");
+
+    try {
+      await migrationTestPool.query(
+        `
+          INSERT INTO organizations (
+            id,
+            name,
+            slug,
+            type,
+            owner_user_id
+          )
+          VALUES ($1, $2, $3, 'team', $4)
+        `,
+        [
+          otherOrganizationId,
+          "Other Role Migration Test",
+          "other-role-migration-test",
+          userIds[1],
+        ]
+      );
+
+      await migrationTestPool.query(
+        `
+          INSERT INTO organization_members (
+            organization_id,
+            user_id,
+            role,
+            status
+          )
+          VALUES ($1, $2, 'owner', 'active')
+        `,
+        [otherOrganizationId, userIds[1]]
+      );
+
+      await migrationTestPool.query(
+        `
+          INSERT INTO roles (
+            id,
+            organization_id,
+            scope,
+            key,
+            name,
+            is_system
+          )
+          VALUES (
+            $1,
+            $2,
+            'organization',
+            'custom_org_role',
+            'Custom Organization Role',
+            FALSE
+          )
+        `,
+        [otherCustomRoleId, otherOrganizationId]
+      );
+
+      await migrationTestPool.query("COMMIT");
+    } catch (error) {
+      await migrationTestPool.query("ROLLBACK");
+      throw error;
+    }
+
+    // A custom role cannot be used outside its owning organization.
+    await expect(
+      migrationTestPool.query(
+        `
+          INSERT INTO invitations (
+            id,
+            organization_id,
+            email,
+            role_id,
+            token_hash,
+            invited_by,
+            expires_at
+          )
+          VALUES (
+            '40000000-0000-4000-8000-000000000007',
+            $1,
+            'foreign-custom-role@example.com',
+            $2,
+            REPEAT('1', 64),
+            $3,
+            NOW() + INTERVAL '7 days'
+          )
+        `,
+        [organizationId, otherCustomRoleId, userIds[0]]
+      )
+    ).rejects.toThrow();
+
+    // An expired invitation must not block a new pending invitation
+    // for the same organization and email address.
+    await migrationTestPool.query(
+      `
+        INSERT INTO invitations (
+          id,
+          organization_id,
+          email,
+          role_id,
+          token_hash,
+          invited_by,
+          expires_at
+        )
+        SELECT
+          '40000000-0000-4000-8000-000000000008',
+          $1,
+          'expired-member@example.com',
+          id,
+          REPEAT('2', 64),
+          $2,
+          NOW() + INTERVAL '7 days'
+        FROM roles
+        WHERE scope = 'organization'
+          AND key = 'member'
+          AND is_system = TRUE
+      `,
+      [organizationId, userIds[0]]
+    );
+
+    const newPendingInvitation = await migrationTestPool.query<{
+      status: string;
+      email_delivery_status: string;
+      email_delivery_attempts: number;
+    }>(
+      `
+        SELECT
+          status,
+          email_delivery_status,
+          email_delivery_attempts
+        FROM invitations
+        WHERE id = '40000000-0000-4000-8000-000000000008'
+      `
+    );
+
+    expect(newPendingInvitation.rows[0]).toEqual({
+      status: "pending",
+      email_delivery_status: "pending",
+      email_delivery_attempts: 0,
+    });
+
+    // Non-accepted invitations must not have acceptance metadata.
+    await expect(
+      migrationTestPool.query(
+        `
+          UPDATE invitations
+          SET accepted_by = $1
+          WHERE id = '40000000-0000-4000-8000-000000000002'
+        `,
+        [userIds[1]]
+      )
+    ).rejects.toThrow();
+
+    // Accepted invitations must have both acceptance fields.
+    await expect(
+      migrationTestPool.query(
+        `
+          UPDATE invitations
+          SET status = 'accepted'
+          WHERE id = '40000000-0000-4000-8000-000000000003'
+        `
+      )
+    ).rejects.toThrow();
 
     // Verify a member can hold multiple project roles.
     await migrationTestPool.query(
@@ -740,5 +1147,25 @@ describe("Migration Runner", () => {
     );
 
     expect(migration004?.status).toBe("EXECUTED");
+
+    // Verify Migration 005 was recorded.
+    const invitationMigrationResult =
+      await migrationTestPool.query<{ count: string }>(
+        `
+          SELECT COUNT(*)::text AS count
+          FROM schema_migrations
+          WHERE name = '005_create_invitation_foundation.sql'
+        `
+      );
+
+    expect(invitationMigrationResult.rows[0].count).toBe("1");
+
+    const migration005 = migrationStatus.find(
+      (migration) =>
+        migration.name ===
+        "005_create_invitation_foundation.sql"
+    );
+
+    expect(migration005?.status).toBe("EXECUTED");
   });
 });
