@@ -6,18 +6,21 @@ import type {
 } from "pg";
 
 import { pool as defaultPool } from "../config/database.js";
-import { env } from "../config/env.js";
 import {
   PostgresTransactionManager,
   type TransactionManager,
 } from "../database/transaction-manager.js";
 
+import type { OrganizationMemberRepository } from "./organization-member.repository.js";
+
 import type {
   CreateOrganizationMemberInput,
   OrganizationMember,
+  OrganizationMemberAssignedRole,
+  OrganizationMemberDetails,
 } from "./organization-member.types.js";
 
-interface OrganizationMemberRow {
+interface OrganizationMemberRow extends QueryResultRow {
   organization_id: string;
   user_id: string;
   role: OrganizationMember["role"];
@@ -25,7 +28,20 @@ interface OrganizationMemberRow {
   joined_at: Date;
 }
 
-export class PostgresOrganizationMemberRepository {
+interface OrganizationMemberDetailsRow extends QueryResultRow {
+  organization_id: string;
+  user_id: string;
+  email: string;
+  display_name: string;
+  user_status: OrganizationMemberDetails["userStatus"];
+  status: OrganizationMemberDetails["status"];
+  roles: OrganizationMemberAssignedRole[];
+  joined_at: Date;
+}
+
+export class PostgresOrganizationMemberRepository
+  implements OrganizationMemberRepository
+{
   private readonly transactionManager: TransactionManager;
 
   constructor(
@@ -62,6 +78,21 @@ export class PostgresOrganizationMemberRepository {
       userId: row.user_id,
       role: row.role,
       status: row.status,
+      joinedAt: row.joined_at,
+    };
+  }
+
+  private mapOrganizationMemberDetails(
+    row: OrganizationMemberDetailsRow
+  ): OrganizationMemberDetails {
+    return {
+      organizationId: row.organization_id,
+      userId: row.user_id,
+      email: row.email,
+      displayName: row.display_name,
+      userStatus: row.user_status,
+      status: row.status,
+      roles: row.roles,
       joinedAt: row.joined_at,
     };
   }
@@ -144,5 +175,119 @@ export class PostgresOrganizationMemberRepository {
     return result.rows.map((row) =>
       this.mapOrganizationMember(row)
     );
+  }
+
+  async findAllByOrganizationId(
+    organizationId: string,
+    client?: PoolClient
+  ): Promise<OrganizationMemberDetails[]> {
+    const result =
+      await this.execute<OrganizationMemberDetailsRow>(
+        "findAllOrganizationMembers",
+        client,
+        `SELECT
+          om.organization_id,
+          om.user_id,
+          u.email,
+          u.display_name,
+          u.status AS user_status,
+          om.status,
+          om.joined_at,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'key', r.key,
+                'name', r.name,
+                'description', r.description,
+                'isSystem', r.is_system
+              )
+              ORDER BY r.name, r.key
+            ) FILTER (WHERE r.id IS NOT NULL),
+            '[]'::jsonb
+          ) AS roles
+        FROM organization_members om
+        INNER JOIN users u
+          ON u.id = om.user_id
+        LEFT JOIN organization_member_roles omr
+          ON omr.organization_id = om.organization_id
+          AND omr.user_id = om.user_id
+        LEFT JOIN roles r
+          ON r.id = omr.role_id
+        WHERE om.organization_id = $1
+        GROUP BY
+          om.organization_id,
+          om.user_id,
+          u.email,
+          u.display_name,
+          u.status,
+          om.status,
+          om.joined_at
+        ORDER BY
+          om.joined_at ASC,
+          u.display_name ASC,
+          om.user_id ASC`,
+        [organizationId]
+      );
+
+    return result.rows.map((row) =>
+      this.mapOrganizationMemberDetails(row)
+    );
+  }
+
+  async findDetailsByOrganizationAndUser(
+    organizationId: string,
+    userId: string,
+    client?: PoolClient
+  ): Promise<OrganizationMemberDetails | undefined> {
+    const result =
+      await this.execute<OrganizationMemberDetailsRow>(
+        "findOrganizationMemberDetails",
+        client,
+        `SELECT
+          om.organization_id,
+          om.user_id,
+          u.email,
+          u.display_name,
+          u.status AS user_status,
+          om.status,
+          om.joined_at,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'key', r.key,
+                'name', r.name,
+                'description', r.description,
+                'isSystem', r.is_system
+              )
+              ORDER BY r.name, r.key
+            ) FILTER (WHERE r.id IS NOT NULL),
+            '[]'::jsonb
+          ) AS roles
+        FROM organization_members om
+        INNER JOIN users u
+          ON u.id = om.user_id
+        LEFT JOIN organization_member_roles omr
+          ON omr.organization_id = om.organization_id
+          AND omr.user_id = om.user_id
+        LEFT JOIN roles r
+          ON r.id = omr.role_id
+        WHERE om.organization_id = $1
+          AND om.user_id = $2
+        GROUP BY
+          om.organization_id,
+          om.user_id,
+          u.email,
+          u.display_name,
+          u.status,
+          om.status,
+          om.joined_at`,
+        [organizationId, userId]
+      );
+
+    const row = result.rows[0];
+
+    return row
+      ? this.mapOrganizationMemberDetails(row)
+      : undefined;
   }
 }

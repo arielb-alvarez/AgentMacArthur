@@ -6,6 +6,8 @@ import { PostgresOrganizationRepository } from "../organizations/postgres-organi
 import { PostgresOrganizationMemberRepository } from "../organization-members/postgres-organization-member.repository.js";
 
 import { OrganizationService } from "../organizations/organization.service.js";
+import { OrganizationMemberService } from "../organization-members/organization-member.service.js";
+
 import { createOrganizationController } from "../controllers/organization.controller.js";
 
 const transactionManager = new PostgresTransactionManager(pool);
@@ -28,5 +30,15 @@ const organizationService = new OrganizationService(
   transactionManager
 );
 
+const organizationMemberService =
+  new OrganizationMemberService(
+    organizationRepository,
+    organizationMemberRepository,
+    transactionManager
+  );
+
 export const organizationController =
-  createOrganizationController(organizationService);
+  createOrganizationController(
+    organizationService,
+    organizationMemberService
+  );

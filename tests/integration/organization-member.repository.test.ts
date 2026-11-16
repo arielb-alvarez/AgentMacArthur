@@ -16,6 +16,7 @@ import {
 import { PostgresUserRepository } from "../../src/users/postgres-user.repository.js";
 import { PostgresOrganizationRepository } from "../../src/organizations/postgres-organization.repository.js";
 import { PostgresOrganizationMemberRepository } from "../../src/organization-members/postgres-organization-member.repository.js";
+import { PostgresRoleAssignmentRepository } from "../../src/role-assignments/postgres-role-assignment.repository.js";
 
 import type { CreateOrganizationInput } from "../../src/organizations/organization.types.js";
 
@@ -79,6 +80,9 @@ describe("PostgresOrganizationMemberRepository", () => {
       client.release();
     }
   };
+
+  const roleAssignmentRepository =
+    new PostgresRoleAssignmentRepository(testPool);
 
   beforeAll(async () => {
     await setupTestDatabase();
@@ -208,5 +212,170 @@ describe("PostgresOrganizationMemberRepository", () => {
         status: "active",
       })
     ).rejects.toThrow();
+  });
+
+
+  it("should list organization members with their assigned roles", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const member = await userRepository.create({
+      email: "member@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Taylor",
+    });
+
+    await repository.create({
+      organizationId: organization.id,
+      userId: member.id,
+      role: "member",
+      status: "active",
+    });
+
+    await roleAssignmentRepository.assignOrganizationRole({
+      organizationId: organization.id,
+      userId: member.id,
+      roleKey: "admin",
+      assignedBy: owner.id,
+    });
+
+    await roleAssignmentRepository.assignOrganizationRole({
+      organizationId: organization.id,
+      userId: member.id,
+      roleKey: "member",
+      assignedBy: owner.id,
+    });
+
+    const members = await repository.findAllByOrganizationId(
+      organization.id
+    );
+
+    expect(members).toHaveLength(2);
+
+    const result = members.find(
+      (item) => item.userId === member.id
+    );
+
+    expect(result).toBeDefined();
+    expect(result?.email).toBe(member.email);
+    expect(result?.displayName).toBe(member.displayName);
+    expect(result?.status).toBe("active");
+    expect(result?.roles).toHaveLength(2);
+    expect(result?.roles.map((role) => role.key)).toEqual(
+      expect.arrayContaining(["admin", "member"])
+    );
+  });
+
+  it("should return an empty roles array for a member without assigned roles", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const result =
+      await repository.findDetailsByOrganizationAndUser(
+        organization.id,
+        owner.id
+      );
+
+    expect(result).toBeDefined();
+    expect(result?.userId).toBe(owner.id);
+    expect(result?.roles).toEqual([]);
+  });
+
+  it("should include suspended memberships in the organization member list", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const suspendedUser = await userRepository.create({
+      email: "suspended@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Suspended User",
+    });
+
+    await repository.create({
+      organizationId: organization.id,
+      userId: suspendedUser.id,
+      role: "member",
+      status: "suspended",
+    });
+
+    const members = await repository.findAllByOrganizationId(
+      organization.id
+    );
+
+    const result = members.find(
+      (item) => item.userId === suspendedUser.id
+    );
+
+    expect(result).toBeDefined();
+    expect(result?.status).toBe("suspended");
+  });
+
+  it("should retrieve detailed information for an organization member", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const result =
+      await repository.findDetailsByOrganizationAndUser(
+        organization.id,
+        owner.id
+      );
+
+    expect(result).toBeDefined();
+    expect(result).toMatchObject({
+      organizationId: organization.id,
+      userId: owner.id,
+      email: owner.email,
+      displayName: owner.displayName,
+      status: "active",
+      roles: [],
+    });
+
+    expect(result?.joinedAt).toBeInstanceOf(Date);
+    expect(result?.userStatus).toBe(owner.status);
+  });
+
+  it("should return undefined for a member who does not belong to the organization", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const anotherUser = await userRepository.create({
+      email: "another@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Another User",
+    });
+
+    const result =
+      await repository.findDetailsByOrganizationAndUser(
+        organization.id,
+        anotherUser.id
+      );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("should return an empty list when an organization has no members", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const members = await repository.findAllByOrganizationId(
+      "00000000-0000-4000-8000-000000000000"
+    );
+
+    expect(members).toEqual([]);
+    expect(organization.id).not.toBe(
+      "00000000-0000-4000-8000-000000000000"
+    );
   });
 });

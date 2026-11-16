@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
     list: vi.fn(),
     getById: vi.fn(),
     update: vi.fn(),
+    listMembers: vi.fn(),
+    getMember: vi.fn(),
   },
   authMiddleware: {
     requireAuth: vi.fn(),
@@ -101,6 +103,22 @@ describe("Organization HTTP Routes", () => {
             ...validOrganization,
             name: "Updated Development Team",
           },
+        })
+    );
+
+    mocks.organizationController.listMembers.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          members: [],
+        })
+    );
+
+    mocks.organizationController.getMember.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          member: {},
         })
     );
   });
@@ -291,6 +309,14 @@ describe("Organization HTTP Routes", () => {
           .send({
             name: "Updated Team",
           }),
+
+        request(app)
+          .get(`/api/organizations/${organizationId}/members`),
+
+        request(app)
+          .get(
+            `/api/organizations/${organizationId}/members/22222222-2222-4222-8222-222222222222`
+          ),
       ];
 
       for (const endpoint of endpoints) {
@@ -302,7 +328,76 @@ describe("Organization HTTP Routes", () => {
 
       expect(
         mocks.authMiddleware.requireAuth
-      ).toHaveBeenCalledTimes(3);
+      ).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe("GET /api/organizations/:organizationId/members", () => {
+    it("should list organization members", async () => {
+      const response = await request(app)
+        .get(`/api/organizations/${organizationId}/members`)
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.members).toEqual([]);
+
+      expect(
+        mocks.organizationController.listMembers
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject an invalid organization ID", async () => {
+      const response = await request(app)
+        .get("/api/organizations/invalid-id/members")
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.organizationController.listMembers
+      ).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("GET /api/organizations/:organizationId/members/:userId", () => {
+    const userId = "22222222-2222-4222-8222-222222222222";
+
+    it("should return organization member details", async () => {
+      const response = await request(app)
+        .get(`/api/organizations/${organizationId}/members/${userId}`)
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+
+      expect(
+        mocks.organizationController.getMember
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject an invalid organization ID", async () => {
+      const response = await request(app)
+        .get(`/api/organizations/invalid-id/members/${userId}`)
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.organizationController.getMember
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should reject an invalid user ID", async () => {
+      const response = await request(app)
+        .get(`/api/organizations/${organizationId}/members/invalid-id`)
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.organizationController.getMember
+      ).not.toHaveBeenCalled();
     });
   });
 });

@@ -12,6 +12,7 @@ import { validate } from "../middleware/validate.middleware.js";
 
 import {
   organizationIdParamsSchema,
+  organizationMemberParamsSchema,
   updateOrganizationSchema,
 } from "../validators/organization.validator.js";
 
@@ -37,6 +38,80 @@ router.get(
   "/",
   authMiddleware.requireAuth,
   organizationController.list
+);
+
+/**
+ * @openapi
+ * /api/organizations/{organizationId}/members:
+ *   get:
+ *     tags:
+ *       - Organizations
+ *     summary: List organization members
+ *     description: Returns organization members and their assigned organization roles. Only active organization members can access this endpoint.
+ *     security:
+ *       - SessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: organizationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Organization members returned.
+ *       400:
+ *         description: Invalid organization ID.
+ *       401:
+ *         description: Authentication required.
+ *       404:
+ *         description: Organization not found or inaccessible.
+ */
+router.get(
+  "/:organizationId/members",
+  authMiddleware.requireAuth,
+  validate(organizationIdParamsSchema, "params"),
+  organizationController.listMembers
+);
+
+/**
+ * @openapi
+ * /api/organizations/{organizationId}/members/{userId}:
+ *   get:
+ *     tags:
+ *       - Organizations
+ *     summary: Get organization member details
+ *     description: Returns a member's profile, membership status, and assigned organization roles. Only active organization members can access this endpoint.
+ *     security:
+ *       - SessionCookie: []
+ *     parameters:
+ *       - in: path
+ *         name: organizationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Organization member returned.
+ *       400:
+ *         description: Invalid organization or user ID.
+ *       401:
+ *         description: Authentication required.
+ *       404:
+ *         description: Organization or member not found or inaccessible.
+ */
+router.get(
+  "/:organizationId/members/:userId",
+  authMiddleware.requireAuth,
+  validate(organizationMemberParamsSchema, "params"),
+  organizationController.getMember
 );
 
 /**

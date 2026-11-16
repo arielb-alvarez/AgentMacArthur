@@ -8,6 +8,17 @@ export const organizationIdParamsSchema = z
   })
   .strict();
 
+export const organizationMemberParamsSchema = z
+  .object({
+    organizationId: z
+      .string()
+      .uuid("Organization ID must be a valid UUID."),
+    userId: z
+      .string()
+      .uuid("User ID must be a valid UUID."),
+  })
+  .strict();
+
 export const updateOrganizationSchema = z
   .object({
     name: z

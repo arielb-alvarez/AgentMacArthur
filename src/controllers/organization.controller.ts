@@ -1,10 +1,13 @@
 import type { Request, Response, NextFunction } from "express";
 
 import type { OrganizationService } from "../organizations/organization.service.js";
+import type { OrganizationMemberService } from "../organization-members/organization-member.service.js";
+
 import { AppError } from "../errors/app.error.js";
 
 export const createOrganizationController = (
-  organizationService: OrganizationService
+  organizationService: OrganizationService,
+  organizationMemberService: OrganizationMemberService
 ) => {
   const getAuthenticatedUserId = (req: Request): string => {
     if (!req.auth) {
@@ -90,9 +93,61 @@ export const createOrganizationController = (
     }
   };
 
+  const listMembers = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const params = getValidatedRequest<{
+        organizationId: string;
+      }>(res, "params");
+
+      const members = await organizationMemberService.listMembers(
+        params.organizationId,
+        getAuthenticatedUserId(req)
+      );
+
+      return res.status(200).json({
+        success: true,
+        members,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  const getMember = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const params = getValidatedRequest<{
+        organizationId: string;
+        userId: string;
+      }>(res, "params");
+
+      const member = await organizationMemberService.getMember(
+        params.organizationId,
+        params.userId,
+        getAuthenticatedUserId(req)
+      );
+
+      return res.status(200).json({
+        success: true,
+        member,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   return {
     list,
     getById,
     update,
+    listMembers,
+    getMember,
   };
 };

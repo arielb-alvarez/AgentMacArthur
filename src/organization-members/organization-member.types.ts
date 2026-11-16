@@ -1,3 +1,5 @@
+import type { UserStatus } from "../users/user.types.js";
+
 export type OrganizationMemberRole =
   | "owner"
   | "admin"
@@ -20,4 +22,22 @@ export interface CreateOrganizationMemberInput {
   userId: string;
   role: OrganizationMemberRole;
   status: OrganizationMemberStatus;
+}
+
+export interface OrganizationMemberAssignedRole {
+  key: string;
+  name: string;
+  description: string | null;
+  isSystem: boolean;
+}
+
+export interface OrganizationMemberDetails {
+  organizationId: string;
+  userId: string;
+  email: string;
+  displayName: string;
+  userStatus: UserStatus;
+  status: OrganizationMemberStatus;
+  roles: OrganizationMemberAssignedRole[];
+  joinedAt: Date;
 }
