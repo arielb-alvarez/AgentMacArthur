@@ -2,6 +2,7 @@ import { AppError } from "../errors/app.error.js";
 
 import type { TransactionManager } from "../database/transaction-manager.js";
 import type { OrganizationMemberRepository } from "../organization-members/organization-member.repository.js";
+import type { OrganizationPermissionService } from "../permissions/organization-permission.service.js";
 import type { Organization } from "./organization.types.js";
 import type { OrganizationRepository } from "./organization.repository.js";
 import type { UpdateOrganizationInput } from "./organization.types.js";
@@ -10,6 +11,7 @@ export class OrganizationService {
   constructor(
     private readonly organizationRepository: OrganizationRepository,
     private readonly organizationMemberRepository: OrganizationMemberRepository,
+    private readonly organizationPermissionService: OrganizationPermissionService,
     private readonly transactionManager: TransactionManager
   ) {}
 
@@ -74,15 +76,12 @@ export class OrganizationService {
           throw this.organizationNotFoundError();
         }
 
-        if (
-          member.role !== "owner" &&
-          member.role !== "admin"
-        ) {
-          throw new AppError(
-            "You do not have permission to update this organization.",
-            403
-          );
-        }
+        await this.organizationPermissionService.assertPermission(
+          organizationId,
+          userId,
+          "organization.update",
+          client
+        );
 
         const updatedOrganization =
           await this.organizationRepository.update(

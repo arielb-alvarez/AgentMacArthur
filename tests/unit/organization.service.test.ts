@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OrganizationService } from "../../src/organizations/organization.service.js";
+import { OrganizationPermissionService } from "../../src/permissions/organization-permission.service.js";
 
 import type { Organization } from "../../src/organizations/organization.types.js";
 
@@ -10,6 +11,7 @@ const mocks = {
   findOrganizationsByUserId: vi.fn(),
   updateOrganization: vi.fn(),
   findOrganizationMember: vi.fn(),
+  hasOrganizationPermission: vi.fn(),
 };
 
 describe("OrganizationService", () => {
@@ -52,6 +54,11 @@ describe("OrganizationService", () => {
     mocks.findOrganizationMember.mockResolvedValue(
       activeOrganizationMember
     );
+    mocks.hasOrganizationPermission.mockResolvedValue(false);
+
+    const permissionService = new OrganizationPermissionService({
+      hasOrganizationPermission: mocks.hasOrganizationPermission,
+    });
 
     service = new OrganizationService(
       {
@@ -62,6 +69,7 @@ describe("OrganizationService", () => {
       {
         findByOrganizationAndUser: mocks.findOrganizationMember,
       } as never,
+      permissionService,
       {
         runInTransaction: mocks.runInTransaction,
       } as never
@@ -147,11 +155,8 @@ describe("OrganizationService", () => {
   });
 
   describe("update", () => {
-    it("should allow organization owners to update organization details", async () => {
-      mocks.findOrganizationMember.mockResolvedValue({
-        ...activeOrganizationMember,
-        role: "owner",
-      });
+    it("should allow users with organization.update permission", async () => {
+      mocks.hasOrganizationPermission.mockResolvedValue(true);
 
       const result = await service.update(
         organizationId,
@@ -161,6 +166,13 @@ describe("OrganizationService", () => {
 
       expect(result).toEqual(organization);
 
+      expect(mocks.hasOrganizationPermission).toHaveBeenCalledWith(
+        organizationId,
+        userId,
+        "organization.update",
+        expect.any(Object)
+      );
+
       expect(mocks.updateOrganization).toHaveBeenCalledWith(
         organizationId,
         { name: "Updated Organization" },
@@ -168,22 +180,19 @@ describe("OrganizationService", () => {
       );
     });
 
-    it("should allow organization admins to update organization details", async () => {
-      mocks.findOrganizationMember.mockResolvedValue({
-        ...activeOrganizationMember,
-        role: "admin",
-      });
+    it("should allow a member with a custom role granting organization.update", async () => {
+      mocks.hasOrganizationPermission.mockResolvedValue(true);
 
       await service.update(
         organizationId,
         userId,
-        { name: "Updated Organization" }
+        { name: "Custom Role Update" }
       );
 
       expect(mocks.updateOrganization).toHaveBeenCalledOnce();
     });
 
-    it("should deny regular members from updating organization details", async () => {
+    it("should deny users without organization.update permission", async () => {
       await expect(
         service.update(organizationId, userId, {
           name: "Unauthorized Update",
@@ -209,6 +218,7 @@ describe("OrganizationService", () => {
         statusCode: 404,
       });
 
+      expect(mocks.hasOrganizationPermission).not.toHaveBeenCalled();
       expect(mocks.updateOrganization).not.toHaveBeenCalled();
     });
 
@@ -223,6 +233,7 @@ describe("OrganizationService", () => {
         statusCode: 404,
       });
 
+      expect(mocks.hasOrganizationPermission).not.toHaveBeenCalled();
       expect(mocks.updateOrganization).not.toHaveBeenCalled();
     });
 
@@ -238,6 +249,7 @@ describe("OrganizationService", () => {
       });
 
       expect(mocks.findOrganizationMember).not.toHaveBeenCalled();
+      expect(mocks.hasOrganizationPermission).not.toHaveBeenCalled();
       expect(mocks.updateOrganization).not.toHaveBeenCalled();
     });
   });

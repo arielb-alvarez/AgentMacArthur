@@ -18,6 +18,9 @@ import {
 import { PostgresUserRepository } from "../../src/users/postgres-user.repository.js";
 import { PostgresOrganizationRepository } from "../../src/organizations/postgres-organization.repository.js";
 import { PostgresOrganizationMemberRepository } from "../../src/organization-members/postgres-organization-member.repository.js";
+import { PostgresRoleAssignmentRepository } from "../../src/role-assignments/postgres-role-assignment.repository.js";
+import { PostgresOrganizationPermissionRepository } from "../../src/permissions/postgres-organization-permission.repository.js";
+import { OrganizationPermissionService } from "../../src/permissions/organization-permission.service.js";
 
 import { OrganizationService } from "../../src/organizations/organization.service.js";
 
@@ -40,9 +43,27 @@ describe("OrganizationService integration", () => {
       transactionManager
     );
 
+  const roleAssignmentRepository =
+    new PostgresRoleAssignmentRepository(
+      testPool,
+      transactionManager
+    );
+
+  const organizationPermissionRepository =
+    new PostgresOrganizationPermissionRepository(
+      testPool,
+      transactionManager
+    );
+
+  const organizationPermissionService =
+    new OrganizationPermissionService(
+      organizationPermissionRepository
+    );
+
   const organizationService = new OrganizationService(
     organizationRepository,
     organizationMemberRepository,
+    organizationPermissionService,
     transactionManager
   );
 
@@ -84,6 +105,16 @@ describe("OrganizationService integration", () => {
           client
         );
 
+        await roleAssignmentRepository.assignOrganizationRole(
+          {
+            organizationId: organization.id,
+            userId: ownerUserId,
+            roleKey: "owner",
+            assignedBy: ownerUserId,
+          },
+          client
+        );
+
         return organization;
       }
     );
@@ -94,12 +125,32 @@ describe("OrganizationService integration", () => {
     userId: string,
     role: "admin" | "member" = "member"
   ) => {
-    return organizationMemberRepository.create({
-      organizationId,
-      userId,
-      role,
-      status: "active",
-    });
+    return transactionManager.runInTransaction(
+      "addOrganizationServiceTestMember",
+      async (client) => {
+        const member = await organizationMemberRepository.create(
+          {
+            organizationId,
+            userId,
+            role,
+            status: "active",
+          },
+          client
+        );
+
+        await roleAssignmentRepository.assignOrganizationRole(
+          {
+            organizationId,
+            userId,
+            roleKey: role,
+            assignedBy: userId,
+          },
+          client
+        );
+
+        return member;
+      }
+    );
   };
 
   beforeAll(async () => {

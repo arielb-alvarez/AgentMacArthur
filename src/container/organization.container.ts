@@ -4,7 +4,9 @@ import { PostgresTransactionManager } from "../database/transaction-manager.js";
 
 import { PostgresOrganizationRepository } from "../organizations/postgres-organization.repository.js";
 import { PostgresOrganizationMemberRepository } from "../organization-members/postgres-organization-member.repository.js";
+import { PostgresOrganizationPermissionRepository } from "../permissions/postgres-organization-permission.repository.js";
 
+import { OrganizationPermissionService } from "../permissions/organization-permission.service.js";
 import { OrganizationService } from "../organizations/organization.service.js";
 import { OrganizationMemberService } from "../organization-members/organization-member.service.js";
 
@@ -24,9 +26,21 @@ const organizationMemberRepository =
     transactionManager
   );
 
+const organizationPermissionRepository =
+  new PostgresOrganizationPermissionRepository(
+    pool,
+    transactionManager
+  );
+
+const organizationPermissionService =
+  new OrganizationPermissionService(
+    organizationPermissionRepository
+  );
+
 const organizationService = new OrganizationService(
   organizationRepository,
   organizationMemberRepository,
+  organizationPermissionService,
   transactionManager
 );
 
