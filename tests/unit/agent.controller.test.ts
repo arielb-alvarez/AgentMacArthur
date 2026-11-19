@@ -4,6 +4,20 @@ import { createAgentController } from "../../src/controllers/agent.controller.js
 import type { AgentChatService } from "../../src/agent/agent-chat.service.js";
 
 describe("Agent Controller", () => {
+  const authenticatedUserId = "test-user-id";
+
+  const createAuthenticatedRequest = () =>
+    ({
+      auth: {
+        user: {
+          id: authenticatedUserId,
+        },
+      },
+      body: {
+        message: "Hello AgentMacArthur",
+      },
+    }) as any;
+
   it("should return a successful response", async () => {
     const chatMock = vi.fn().mockResolvedValue({
       conversationId: "test-conversation-id",
@@ -16,11 +30,7 @@ describe("Agent Controller", () => {
 
     const controller = createAgentController(fakeAgentChatService);
 
-    const req = {
-      body: {
-        message: "Hello AgentMacArthur",
-      },
-    } as any;
+    const req = createAuthenticatedRequest();
 
     const res = {
       status: vi.fn().mockReturnThis(),
@@ -32,9 +42,12 @@ describe("Agent Controller", () => {
     await controller.chat(req, res, next);
 
     expect(chatMock).toHaveBeenCalledOnce();
-    expect(chatMock).toHaveBeenCalledWith({
-      message: "Hello AgentMacArthur",
-    });
+    expect(chatMock).toHaveBeenCalledWith(
+      authenticatedUserId,
+      {
+        message: "Hello AgentMacArthur",
+      }
+    );
 
     expect(res.status).toHaveBeenCalledWith(200);
 
@@ -51,17 +64,15 @@ describe("Agent Controller", () => {
   it("should forward service errors to next middleware", async () => {
     const serviceError = new Error("Agent chat failed");
 
+    const chatMock = vi.fn().mockRejectedValue(serviceError);
+
     const fakeAgentChatService = {
-      chat: vi.fn().mockRejectedValue(serviceError),
+      chat: chatMock,
     } as unknown as AgentChatService;
 
     const controller = createAgentController(fakeAgentChatService);
 
-    const req = {
-      body: {
-        message: "Hello AgentMacArthur",
-      },
-    } as any;
+    const req = createAuthenticatedRequest();
 
     const res = {
       status: vi.fn().mockReturnThis(),
@@ -71,6 +82,14 @@ describe("Agent Controller", () => {
     const next = vi.fn();
 
     await controller.chat(req, res, next);
+
+    expect(chatMock).toHaveBeenCalledOnce();
+    expect(chatMock).toHaveBeenCalledWith(
+      authenticatedUserId,
+      {
+        message: "Hello AgentMacArthur",
+      }
+    );
 
     expect(next).toHaveBeenCalledWith(serviceError);
     expect(res.status).not.toHaveBeenCalled();

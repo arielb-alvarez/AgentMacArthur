@@ -1,9 +1,9 @@
-
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    fileParallelism: false,
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],
@@ -20,11 +20,28 @@ export default defineConfig({
 
         // Test-only infrastructure.
         "src/config/test-database.ts",
+        "src/config/migration-test-database.ts",
 
-        // Type-only modules.
-        "src/agent/agent-provider.ts",
-        "src/conversations/conversation.repository.ts",
-        "src/conversations/conversation.types.ts",
+        // Type-only contracts and definitions.
+        "src/auth-tokens/auth-token.repository.ts",
+        "src/auth-tokens/auth-token.types.ts",
+        "src/email/email.service.ts",
+        "src/invitations/invitation.repository.ts",
+        "src/invitations/invitation.types.ts",
+        "src/organization-members/organization-member.repository.ts",
+        "src/organization-members/organization-member.types.ts",
+        "src/organizations/organization.repository.ts",
+        "src/organizations/organization.types.ts",
+        "src/permissions/organization-permission.repository.ts",
+        "src/project-members/project-member.repository.ts",
+        "src/project-members/project-member.types.ts",
+        "src/projects/project.repository.ts",
+        "src/projects/project.types.ts",
+        "src/role-assignments/role-assignment.repository.ts",
+        "src/sessions/session.repository.ts",
+        "src/sessions/session.types.ts",
+        "src/users/user.repository.ts",
+        "src/users/user.types.ts",
       ],
       reportsDirectory: "./coverage",
       thresholds: {

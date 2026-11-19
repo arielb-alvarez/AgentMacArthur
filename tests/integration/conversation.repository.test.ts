@@ -1,118 +1,344 @@
 import {
   afterAll,
-  afterEach,
   beforeAll,
   beforeEach,
   describe,
   expect,
   it,
-  vi,
 } from "vitest";
 
-import { logger } from "../../src/utils/logger.js";
+import { randomUUID } from "node:crypto";
+
 import { testPool } from "../../src/config/test-database.js";
+import { PostgresTransactionManager } from "../../src/database/transaction-manager.js";
 import { PostgresConversationRepository } from "../../src/conversations/postgres-conversation.repository.js";
 
 import {
+  clearIdentityTestDatabase,
   clearTestDatabase,
   setupTestDatabase,
 } from "../helpers/database-setup.js";
 
-describe("PostgresConversationRepository", () => {
-  const repository = new PostgresConversationRepository(testPool);
+import type {
+  CreateConversationInput,
+  ConversationMessage,
+} from "../../src/conversations/conversation.types.js";
+
+describe("PostgresConversationRepository integration", () => {
+  const transactionManager = new PostgresTransactionManager(testPool);
+  const repository = new PostgresConversationRepository();
+
+  let userId: string;
+  let organizationId: string;
+  let projectId: string;
 
   beforeAll(async () => {
     await setupTestDatabase();
   });
 
   beforeEach(async () => {
+    // Conversations reference users and tenant records.
+    // Delete conversations before clearing identity fixtures.
     await clearTestDatabase();
+    await clearIdentityTestDatabase();
+
+    userId = randomUUID();
+    organizationId = randomUUID();
+    projectId = randomUUID();
+
+    await createUser(userId);
+    await createOrganization(organizationId, userId);
+    await createProject(projectId, organizationId, userId);
   });
 
   afterAll(async () => {
     await testPool.end();
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+  const createUser = async (id: string): Promise<void> => {
+    await testPool.query(
+      `INSERT INTO users (
+        id,
+        email,
+        password_hash,
+        display_name,
+        status
+      )
+      VALUES ($1, $2, $3, $4, 'active')`,
+      [
+        id,
+        `${id}@example.com`,
+        "test-password-hash",
+        "Conversation Test User",
+      ]
+    );
+  };
 
-  it("creates a conversation", async () => {
-    const conversation = await repository.create();
+  const createOrganization = async (
+    id: string,
+    ownerUserId: string
+  ): Promise<void> => {
+    await transactionManager.runInTransaction(
+      "createConversationTestOrganization",
+      async (client) => {
+        await client.query(
+          `INSERT INTO organizations (
+            id,
+            name,
+            slug,
+            type,
+            owner_user_id
+          )
+          VALUES ($1, $2, $3, 'team', $4)`,
+          [
+            id,
+            "Conversation Test Organization",
+            `conversation-${id}`,
+            ownerUserId,
+          ]
+        );
+
+        await client.query(
+          `INSERT INTO organization_members (
+            organization_id,
+            user_id,
+            role,
+            status
+          )
+          VALUES ($1, $2, 'owner', 'active')`,
+          [id, ownerUserId]
+        );
+      }
+    );
+  };
+
+  const createProject = async (
+    id: string,
+    organizationId: string,
+    createdBy: string
+  ): Promise<void> => {
+    await transactionManager.runInTransaction(
+      "createConversationTestProject",
+      async (client) => {
+        await client.query(
+          `INSERT INTO projects (
+            id,
+            organization_id,
+            name,
+            description,
+            status,
+            created_by
+          )
+          VALUES ($1, $2, $3, $4, 'draft', $5)`,
+          [
+            id,
+            organizationId,
+            "Conversation Test Project",
+            "Repository integration test",
+            createdBy,
+          ]
+        );
+
+        await client.query(
+          `INSERT INTO project_members (
+            project_id,
+            organization_id,
+            user_id,
+            role,
+            status
+          )
+          VALUES ($1, $2, $3, 'project_owner', 'active')`,
+          [id, organizationId, createdBy]
+        );
+
+        await client.query(
+          `INSERT INTO project_member_roles (
+            project_id,
+            organization_id,
+            user_id,
+            role_id,
+            assigned_by
+          )
+          SELECT $1, $2, $3, r.id, $4
+          FROM roles r
+          WHERE r.scope = 'project'
+            AND r.key = 'project_owner'
+            AND r.is_system = TRUE`,
+          [id, organizationId, createdBy, createdBy]
+        );
+      }
+    );
+  };
+
+  const createConversation = async (
+    input: CreateConversationInput
+  ) => {
+    return transactionManager.runInTransaction(
+      "createTestConversation",
+      (client) => repository.create(input, client)
+    );
+  };
+
+  const findConversation = async (id: string) => {
+    return transactionManager.runInTransaction(
+      "findTestConversation",
+      (client) => repository.findById(id, client)
+    );
+  };
+
+  const addMessage = async (
+    conversationId: string,
+    message: ConversationMessage
+  ) => {
+    return transactionManager.runInTransaction(
+      "addTestConversationMessage",
+      (client) => repository.addMessage(conversationId, message, client)
+    );
+  };
+
+  it("creates a personal conversation", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "personal",
+    });
 
     expect(conversation.id).toBeDefined();
+    expect(conversation.createdBy).toBe(userId);
+    expect(conversation.scope).toBe("personal");
+    expect(conversation.organizationId).toBeNull();
+    expect(conversation.projectId).toBeNull();
+    expect(conversation.status).toBe("active");
     expect(conversation.messages).toEqual([]);
     expect(conversation.createdAt).toBeInstanceOf(Date);
     expect(conversation.updatedAt).toBeInstanceOf(Date);
   });
 
-  it("retrieves an existing conversation", async () => {
-    const created = await repository.create();
+  it("creates an organization conversation", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "organization",
+      organizationId,
+    });
 
-    const conversation = await repository.findById(created.id);
+    expect(conversation.createdBy).toBe(userId);
+    expect(conversation.scope).toBe("organization");
+    expect(conversation.organizationId).toBe(organizationId);
+    expect(conversation.projectId).toBeNull();
+    expect(conversation.status).toBe("active");
+  });
+
+  it("creates a project conversation", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "project",
+      organizationId,
+      projectId,
+    });
+
+    expect(conversation.createdBy).toBe(userId);
+    expect(conversation.scope).toBe("project");
+    expect(conversation.organizationId).toBe(organizationId);
+    expect(conversation.projectId).toBe(projectId);
+    expect(conversation.status).toBe("active");
+  });
+
+  it("retrieves an existing conversation with its scope metadata", async () => {
+    const created = await createConversation({
+      createdBy: userId,
+      scope: "project",
+      organizationId,
+      projectId,
+    });
+
+    const conversation = await findConversation(created.id);
 
     expect(conversation).toBeDefined();
     expect(conversation?.id).toBe(created.id);
+    expect(conversation?.createdBy).toBe(userId);
+    expect(conversation?.scope).toBe("project");
+    expect(conversation?.organizationId).toBe(organizationId);
+    expect(conversation?.projectId).toBe(projectId);
   });
 
   it("returns undefined for a nonexistent conversation", async () => {
-    const conversation = await repository.findById(
-      "00000000-0000-4000-8000-000000000000"
+    const conversation = await findConversation(
+      randomUUID()
     );
 
     expect(conversation).toBeUndefined();
   });
 
-  it("persists messages in a conversation", async () => {
-    const conversation = await repository.create();
-
-    await repository.addMessage(conversation.id, {
-      role: "user",
-      content: "Hello AgentMacArthur",
+  it("locks an existing conversation for update", async () => {
+    const created = await createConversation({
+      createdBy: userId,
+      scope: "personal",
     });
 
-    const retrieved = await repository.findById(conversation.id);
+    const locked = await transactionManager.runInTransaction(
+      "lockTestConversation",
+      async (client) => {
+        return repository.findByIdForUpdate(created.id, client);
+      }
+    );
 
-    expect(retrieved?.messages).toHaveLength(1);
-    expect(retrieved?.messages[0]).toEqual({
-      role: "user",
-      content: "Hello AgentMacArthur",
-    });
+    expect(locked?.id).toBe(created.id);
+    expect(locked?.createdBy).toBe(userId);
   });
 
+  it("persists messages in a conversation", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "personal",
+    });
 
-  it("returns the complete updated conversation after adding a message", async () => {
-    const conversation = await repository.create();
+    const message: ConversationMessage = {
+      role: "user",
+      content: "Hello AgentMacArthur",
+    };
 
-    await repository.addMessage(conversation.id, {
+    await addMessage(conversation.id, message);
+
+    const retrieved = await findConversation(conversation.id);
+
+    expect(retrieved?.messages).toEqual([message]);
+  });
+
+  it("returns the complete updated conversation after adding messages", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "personal",
+    });
+
+    const firstMessage: ConversationMessage = {
       role: "user",
       content: "First message",
-    });
+    };
 
-    const updated = await repository.addMessage(conversation.id, {
+    const secondMessage: ConversationMessage = {
       role: "assistant",
       content: "Second message",
-    });
+    };
+
+    await addMessage(conversation.id, firstMessage);
+
+    const updated = await addMessage(
+      conversation.id,
+      secondMessage
+    );
 
     expect(updated).toBeDefined();
     expect(updated?.id).toBe(conversation.id);
     expect(updated?.messages).toEqual([
-      {
-        role: "user",
-        content: "First message",
-      },
-      {
-        role: "assistant",
-        content: "Second message",
-      },
+      firstMessage,
+      secondMessage,
     ]);
     expect(updated?.createdAt).toBeInstanceOf(Date);
     expect(updated?.updatedAt).toBeInstanceOf(Date);
   });
 
   it("returns undefined when adding a message to a nonexistent conversation", async () => {
-    const result = await repository.addMessage(
-      "00000000-0000-4000-8000-000000000000",
+    const result = await addMessage(
+      randomUUID(),
       {
         role: "user",
         content: "This should not be saved",
@@ -122,112 +348,114 @@ describe("PostgresConversationRepository", () => {
     expect(result).toBeUndefined();
   });
 
-
-  it("preserves message order in a conversation", async () => {
-    const conversation = await repository.create();
-
-    await repository.addMessage(conversation.id, {
-      role: "user",
-      content: "First message",
+  it("preserves message order", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "personal",
     });
 
-    await repository.addMessage(conversation.id, {
-      role: "assistant",
-      content: "Second message",
-    });
+    const messages: ConversationMessage[] = [
+      { role: "user", content: "First message" },
+      { role: "assistant", content: "Second message" },
+      { role: "user", content: "Third message" },
+    ];
 
-    await repository.addMessage(conversation.id, {
-      role: "user",
-      content: "Third message",
-    });
+    for (const message of messages) {
+      await addMessage(conversation.id, message);
+    }
 
-    const retrieved = await repository.findById(conversation.id);
+    const retrieved = await findConversation(conversation.id);
 
-    expect(retrieved?.messages.map((message) => message.content)).toEqual([
+    expect(
+      retrieved?.messages.map((message) => message.content)
+    ).toEqual([
       "First message",
       "Second message",
       "Third message",
     ]);
   });
 
-  it("logs a warning for slow database operations", async () => {
-    const warnSpy = vi
-      .spyOn(logger, "warn")
-      .mockImplementation(() => { });
-
-    const monitoredRepository = new PostgresConversationRepository(
-      testPool,
-      undefined,
-      1
-    );
-
-    await monitoredRepository.create();
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      "Slow database operation detected",
-      expect.objectContaining({
-        operation: "create",
-        thresholdMs: 1,
-        durationMs: expect.any(Number),
+  it("rejects a conversation with a nonexistent creator", async () => {
+    await expect(
+      createConversation({
+        createdBy: randomUUID(),
+        scope: "personal",
       })
-    );
+    ).rejects.toMatchObject({
+      code: "23503",
+    });
   });
 
-  it("does not log a warning for operations below the threshold", async () => {
-    const warnSpy = vi
-      .spyOn(logger, "warn")
-      .mockImplementation(() => { });
-
-    const monitoredRepository = new PostgresConversationRepository(
-      testPool,
-      undefined,
-      300000
-    );
-
-    await monitoredRepository.create();
-
-    expect(warnSpy).not.toHaveBeenCalled();
+  it("rejects an organization conversation with a nonexistent organization", async () => {
+    await expect(
+      createConversation({
+        createdBy: userId,
+        scope: "organization",
+        organizationId: randomUUID(),
+      })
+    ).rejects.toMatchObject({
+      code: "23503",
+    });
   });
 
-  it("cancels a query that exceeds the configured timeout", async () => {
-    const conversation = await repository.create();
+  it("rejects a project conversation with a mismatched organization", async () => {
+    await expect(
+      createConversation({
+        createdBy: userId,
+        scope: "project",
+        organizationId: randomUUID(),
+        projectId,
+      })
+    ).rejects.toMatchObject({
+      code: "23503",
+    });
+  });
 
-    const blocker = await testPool.connect();
+  it("rejects changes to conversation ownership and scope", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "personal",
+    });
 
-    const shortTimeoutRepository = new PostgresConversationRepository(
-      testPool,
-      100
-    );
-
-    try {
-      // Hold a row lock so the repository's UPDATE must wait.
-      await blocker.query("BEGIN");
-
-      await blocker.query(
+    await expect(
+      testPool.query(
         `UPDATE conversations
-        SET updated_at = NOW()
-        WHERE id = $1`,
-        [conversation.id]
-      );
+         SET scope = 'organization',
+             organization_id = $2
+         WHERE id = $1`,
+        [conversation.id, organizationId]
+      )
+    ).rejects.toThrow(
+      "Conversation ownership and scope cannot be changed."
+    );
+  });
 
-      // PostgreSQL should cancel the waiting query after 100 ms.
-      await expect(
-        shortTimeoutRepository.addMessage(conversation.id, {
-          role: "user",
-          content: "This query should time out",
-        })
-      ).rejects.toMatchObject({
-        code: "57014",
-      });
-    } finally {
-      await blocker.query("ROLLBACK");
-      blocker.release();
-    }
+  it("rolls back a message insertion when its transaction fails", async () => {
+    const conversation = await createConversation({
+      createdBy: userId,
+      scope: "personal",
+    });
 
-    // Confirm the failed transaction did not save a message
-    // and the repository can still use the connection pool.
-    const retrieved = await repository.findById(conversation.id);
+    await expect(
+      transactionManager.runInTransaction(
+        "testConversationRollback",
+        async (client) => {
+          await repository.addMessage(
+            conversation.id,
+            {
+              role: "user",
+              content: "This must roll back",
+            },
+            client
+          );
 
-    expect(retrieved?.messages).toHaveLength(0);
+          throw new Error("Force transaction rollback");
+        }
+      )
+    ).rejects.toThrow("Force transaction rollback");
+
+    const retrieved = await findConversation(conversation.id);
+
+    expect(retrieved?.messages).toEqual([]);
   });
 });

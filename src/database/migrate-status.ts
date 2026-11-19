@@ -1,4 +1,3 @@
-
 import { pool } from "../config/database.js";
 import { logger } from "../utils/logger.js";
 import { getMigrationStatus } from "./migration.runner.js";
@@ -21,7 +20,7 @@ const showMigrationStatus = async (): Promise<void> => {
       ...migrations.map((migration) => migration.name.length)
     );
 
-    console.log(
+  console.log(
       `${"Migration".padEnd(nameWidth)} ${"Status"}`
     );
     console.log("-".repeat(nameWidth + 20));
@@ -40,6 +39,11 @@ const showMigrationStatus = async (): Promise<void> => {
       (migration) => migration.status === "PENDING"
     ).length;
 
+    const checksumsNotInitialized = migrations.filter(
+      (migration) =>
+        migration.status === "CHECKSUM NOT INITIALIZED"
+    ).length;
+
     const checksumMismatches = migrations.filter(
       (migration) => migration.status === "CHECKSUM MISMATCH"
     ).length;
@@ -55,7 +59,10 @@ const showMigrationStatus = async (): Promise<void> => {
 
     if (hasInvalidMigrations) {
       overallStatus = "NEEDS ATTENTION";
-    } else if (pending > 0) {
+    } else if (
+      pending > 0 ||
+      checksumsNotInitialized > 0
+    ) {
       overallStatus = "READY TO MIGRATE";
     }
 
@@ -65,6 +72,9 @@ const showMigrationStatus = async (): Promise<void> => {
     console.log(`Total migrations:       ${migrations.length}`);
     console.log(`Executed:               ${executed}`);
     console.log(`Pending:                ${pending}`);
+    console.log(
+      `Checksums not initialized: ${checksumsNotInitialized}`
+    );
     console.log(`Checksum mismatches:    ${checksumMismatches}`);
     console.log(`Missing files:          ${missingFiles}`);
     console.log("----------------------------------------");

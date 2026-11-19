@@ -45,7 +45,6 @@ export const createRateLimiters = ({
   };
 };
 
-// Production configuration.
 const productionLimiters = createRateLimiters({
   windowMs: 15 * 60 * 1000,
   apiLimit: 100,
@@ -54,3 +53,53 @@ const productionLimiters = createRateLimiters({
 
 export const apiRateLimiter = productionLimiters.apiRateLimiter;
 export const chatRateLimiter = productionLimiters.chatRateLimiter;
+
+const authRegistrationRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "REGISTRATION_RATE_LIMIT_EXCEEDED",
+      message:
+        "Too many registration attempts. Please try again later.",
+    },
+  },
+});
+
+const emailVerificationRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "EMAIL_VERIFICATION_RATE_LIMIT_EXCEEDED",
+      message:
+        "Too many email verification attempts. Please try again later.",
+    },
+  },
+});
+
+const authLoginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "LOGIN_RATE_LIMIT_EXCEEDED",
+      message: "Too many login attempts. Please try again later.",
+    },
+  },
+});
+
+export {
+  authRegistrationRateLimiter,
+  emailVerificationRateLimiter,
+  authLoginRateLimiter,
+};

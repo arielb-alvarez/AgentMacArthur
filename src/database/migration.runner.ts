@@ -21,10 +21,11 @@ interface ExecutedMigration {
 export interface MigrationStatus {
   name: string;
   status:
-    | "PENDING"
-    | "EXECUTED"
-    | "CHECKSUM MISMATCH"
-    | "MISSING FILE";
+  | "PENDING"
+  | "EXECUTED"
+  | "CHECKSUM NOT INITIALIZED"
+  | "CHECKSUM MISMATCH"
+  | "MISSING FILE";
   checksum: string | null;
   expectedChecksum?: string;
 }
@@ -112,6 +113,17 @@ export const getMigrationStatus = async (
       continue;
     }
 
+    if (executedMigration.checksum === null) {
+      statuses.push({
+        name: migrationFile,
+        status: "CHECKSUM NOT INITIALIZED",
+        checksum: null,
+        expectedChecksum,
+      });
+
+      continue;
+    }
+
     if (executedMigration.checksum !== expectedChecksum) {
       statuses.push({
         name: migrationFile,
@@ -182,6 +194,17 @@ const updateMigrationChecksum = async (
   );
 };
 
+const toError = (
+  error: unknown,
+  context: string
+): Error => {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(`${context}: ${String(error)}`);
+};
+
 const executeMigration = async (
   db: Pool,
   migrationName: string,
@@ -189,6 +212,8 @@ const executeMigration = async (
   checksum: string
 ): Promise<void> => {
   const client = await db.connect();
+
+  let releaseError: Error | undefined;
 
   try {
     await client.query("BEGIN");
@@ -202,11 +227,25 @@ const executeMigration = async (
     );
 
     await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+  } catch (migrationError) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      releaseError = toError(
+        rollbackError,
+        "Migration rollback failed"
+      );
+
+      console.error(
+        `Migration rollback failed for ${migrationName}. ` +
+        "The database connection will be discarded.",
+        rollbackError
+      );
+    }
+
+    throw migrationError;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 };
 
@@ -253,6 +292,7 @@ export const runMigrations = async (
   const client = await db.connect();
 
   let lockAcquired = false;
+  let primaryError: unknown;
 
   try {
     await acquireMigrationLock(client);
@@ -269,6 +309,7 @@ export const runMigrations = async (
     );
 
     const executedMigrations = await getExecutedMigrations(db);
+
     validateMigrationFiles(
       migrationFiles,
       executedMigrations
@@ -334,13 +375,33 @@ export const runMigrations = async (
     if (executedCount === 0) {
       console.log("Database is already up to date.");
     }
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
+    let releaseError: Error | undefined;
+
     try {
       if (lockAcquired) {
         await releaseMigrationLock(client);
       }
+    } catch (unlockError) {
+      releaseError = toError(
+        unlockError,
+        "Migration advisory lock release failed"
+      );
+
+      if (primaryError === undefined) {
+        throw unlockError;
+      }
+
+      console.error(
+        "Failed to release the migration advisory lock. " +
+        "The database connection will be discarded.",
+        unlockError
+      );
     } finally {
-      client.release();
+      client.release(releaseError);
     }
   }
 };

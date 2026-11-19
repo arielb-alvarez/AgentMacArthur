@@ -1,12 +1,40 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 
 import { agentController } from "../container/agent.container.js";
+import { authMiddleware } from "../container/auth.container.js";
 
 import { validate } from "../middleware/validate.middleware.js";
 import { chatRateLimiter } from "../middleware/rate-limit.middleware.js";
+import { requireTrustedOrigin } from "../middleware/trusted-origin.middleware.js";
+
 import { chatSchema } from "../validators/agent.validator.js";
 
-const router = Router();
+interface AgentController {
+  chat: RequestHandler;
+}
+
+interface AgentAuthenticationMiddleware {
+  requireAuth: RequestHandler;
+}
+
+export const createAgentRouter = (
+  controller: AgentController,
+  authentication: AgentAuthenticationMiddleware,
+  rateLimiter: RequestHandler = chatRateLimiter
+) => {
+  const router = Router();
+
+  router.post(
+    "/chat",
+    requireTrustedOrigin,
+    rateLimiter,
+    authentication.requireAuth,
+    validate(chatSchema),
+    controller.chat
+  );
+
+  return router;
+};
 
 /**
  * @openapi
@@ -15,7 +43,9 @@ const router = Router();
  *     tags:
  *       - Agent
  *     summary: Send a message to AgentMacArthur
- *     description: Creates a new conversation or continues an existing conversation.
+ *     description: Creates a scoped conversation or continues an existing conversation. Authentication is required.
+ *     security:
+ *       - SessionCookie: []
  *     requestBody:
  *       required: true
  *       content:
@@ -35,30 +65,17 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Authentication required.
+ *       403:
+ *         description: Untrusted origin or insufficient conversation permissions.
  *       404:
  *         description: Conversation was not found.
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  *       429:
  *         description: API or chat rate limit exceeded.
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/RateLimitError'
  *       500:
  *         description: Unexpected server or application error.
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post(
-  "/chat",
-  chatRateLimiter,
-  validate(chatSchema),
-  agentController.chat
-);
+const router = createAgentRouter(agentController, authMiddleware);
 
 export default router;

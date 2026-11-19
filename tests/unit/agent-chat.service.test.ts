@@ -1,39 +1,47 @@
-
-import { describe, it, expect, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+} from "vitest";
 
 import { AgentChatService } from "../../src/agent/agent-chat.service.js";
 
 import type { AgentProvider } from "../../src/agent/agent-provider.js";
 import type { ConversationService } from "../../src/conversations/conversation.service.js";
-import type { Conversation } from "../../src/conversations/conversation.types.js";
 
-describe("Agent Chat Service", () => {
-  const createMockConversation = (
-    messages: Conversation["messages"] = []
-  ): Conversation => ({
-    id: "test-conversation-id",
-    messages,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
+import type {
+  Conversation,
+  ConversationMessage,
+} from "../../src/conversations/conversation.types.js";
 
-  it("should create a conversation and generate a response", async () => {
-    const initialConversation = createMockConversation();
+const userId = "authenticated-user-id";
 
-    const userMessage = {
-      role: "user" as const,
+const createMockConversation = (
+  messages: ConversationMessage[] = [],
+  overrides: Partial<Conversation> = {}
+): Conversation => ({
+  id: "test-conversation-id",
+  createdBy: userId,
+  scope: "personal",
+  organizationId: null,
+  projectId: null,
+  title: null,
+  status: "active",
+  messages,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...overrides,
+});
+
+describe("AgentChatService", () => {
+  it("creates a personal conversation and generates a response", async () => {
+    const userMessage: ConversationMessage = {
+      role: "user",
       content: "Hello AgentMacArthur",
     };
 
-    const updatedConversation = createMockConversation([userMessage]);
-
-    const completedConversation = createMockConversation([
-      userMessage,
-      {
-        role: "assistant",
-        content: "Hello from test provider",
-      },
-    ]);
+    const conversation = createMockConversation([userMessage]);
 
     const fakeProvider: AgentProvider = {
       generateChatResponse: vi.fn().mockResolvedValue(
@@ -42,11 +50,16 @@ describe("Agent Chat Service", () => {
     };
 
     const fakeConversationService = {
-      createConversation: vi.fn().mockResolvedValue(initialConversation),
-      getConversation: vi.fn(),
-      addMessage: vi.fn()
-        .mockResolvedValueOnce(updatedConversation)
-        .mockResolvedValueOnce(completedConversation),
+      startTurn: vi.fn().mockResolvedValue(conversation),
+      completeTurn: vi.fn().mockResolvedValue(
+        createMockConversation([
+          userMessage,
+          {
+            role: "assistant",
+            content: "Hello from test provider",
+          },
+        ])
+      ),
     } as unknown as ConversationService;
 
     const service = new AgentChatService(
@@ -54,15 +67,17 @@ describe("Agent Chat Service", () => {
       fakeConversationService
     );
 
-    const result = await service.chat({
+    const result = await service.chat(userId, {
       message: "Hello AgentMacArthur",
+      scope: "personal",
     });
 
-    expect(fakeConversationService.createConversation).toHaveBeenCalledOnce();
-
-    expect(fakeConversationService.addMessage).toHaveBeenNthCalledWith(
-      1,
-      initialConversation.id,
+    expect(fakeConversationService.startTurn).toHaveBeenCalledWith(
+      userId,
+      {
+        createdBy: userId,
+        scope: "personal",
+      },
       userMessage
     );
 
@@ -70,9 +85,9 @@ describe("Agent Chat Service", () => {
       userMessage,
     ]);
 
-    expect(fakeConversationService.addMessage).toHaveBeenNthCalledWith(
-      2,
-      initialConversation.id,
+    expect(fakeConversationService.completeTurn).toHaveBeenCalledWith(
+      conversation.id,
+      userId,
       {
         role: "assistant",
         content: "Hello from test provider",
@@ -80,13 +95,96 @@ describe("Agent Chat Service", () => {
     );
 
     expect(result).toEqual({
-      conversationId: initialConversation.id,
+      conversationId: conversation.id,
       response: "Hello from test provider",
     });
   });
 
-  it("should continue an existing conversation", async () => {
-    const existingConversation = createMockConversation([
+  it("creates an organization conversation", async () => {
+    const conversation = createMockConversation([], {
+      scope: "organization",
+      organizationId: "organization-123",
+    });
+
+    const fakeProvider: AgentProvider = {
+      generateChatResponse: vi.fn().mockResolvedValue("Organization response"),
+    };
+
+    const fakeConversationService = {
+      startTurn: vi.fn().mockResolvedValue(conversation),
+      completeTurn: vi.fn().mockResolvedValue(conversation),
+    } as unknown as ConversationService;
+
+    const service = new AgentChatService(
+      fakeProvider,
+      fakeConversationService
+    );
+
+    await service.chat(userId, {
+      message: "Organization question",
+      scope: "organization",
+      organizationId: "organization-123",
+    });
+
+    expect(fakeConversationService.startTurn).toHaveBeenCalledWith(
+      userId,
+      {
+        createdBy: userId,
+        scope: "organization",
+        organizationId: "organization-123",
+      },
+      {
+        role: "user",
+        content: "Organization question",
+      }
+    );
+  });
+
+  it("creates a project conversation", async () => {
+    const conversation = createMockConversation([], {
+      scope: "project",
+      organizationId: "organization-123",
+      projectId: "project-123",
+    });
+
+    const fakeProvider: AgentProvider = {
+      generateChatResponse: vi.fn().mockResolvedValue("Project response"),
+    };
+
+    const fakeConversationService = {
+      startTurn: vi.fn().mockResolvedValue(conversation),
+      completeTurn: vi.fn().mockResolvedValue(conversation),
+    } as unknown as ConversationService;
+
+    const service = new AgentChatService(
+      fakeProvider,
+      fakeConversationService
+    );
+
+    await service.chat(userId, {
+      message: "Project question",
+      scope: "project",
+      organizationId: "organization-123",
+      projectId: "project-123",
+    });
+
+    expect(fakeConversationService.startTurn).toHaveBeenCalledWith(
+      userId,
+      {
+        createdBy: userId,
+        scope: "project",
+        organizationId: "organization-123",
+        projectId: "project-123",
+      },
+      {
+        role: "user",
+        content: "Project question",
+      }
+    );
+  });
+
+  it("continues an existing conversation using its stored history", async () => {
+    const previousMessages: ConversationMessage[] = [
       {
         role: "user",
         content: "My name is Alex.",
@@ -95,14 +193,16 @@ describe("Agent Chat Service", () => {
         role: "assistant",
         content: "Hello Alex.",
       },
-    ]);
+    ];
 
-    const updatedConversation = createMockConversation([
-      ...existingConversation.messages,
-      {
-        role: "user",
-        content: "What is my name?",
-      },
+    const userMessage: ConversationMessage = {
+      role: "user",
+      content: "What is my name?",
+    };
+
+    const conversation = createMockConversation([
+      ...previousMessages,
+      userMessage,
     ]);
 
     const fakeProvider: AgentProvider = {
@@ -110,11 +210,8 @@ describe("Agent Chat Service", () => {
     };
 
     const fakeConversationService = {
-      createConversation: vi.fn(),
-      getConversation: vi.fn().mockResolvedValue(existingConversation),
-      addMessage: vi.fn()
-        .mockResolvedValueOnce(updatedConversation)
-        .mockResolvedValueOnce(updatedConversation),
+      startTurn: vi.fn().mockResolvedValue(conversation),
+      completeTurn: vi.fn().mockResolvedValue(conversation),
     } as unknown as ConversationService;
 
     const service = new AgentChatService(
@@ -122,33 +219,46 @@ describe("Agent Chat Service", () => {
       fakeConversationService
     );
 
-    const result = await service.chat({
+    const result = await service.chat(userId, {
       message: "What is my name?",
-      conversationId: existingConversation.id,
+      conversationId: conversation.id,
     });
 
-    expect(fakeConversationService.getConversation).toHaveBeenCalledWith(
-      existingConversation.id
+    expect(fakeConversationService.startTurn).toHaveBeenCalledWith(
+      userId,
+      {
+        conversationId: conversation.id,
+      },
+      userMessage
     );
 
-    expect(fakeConversationService.createConversation).not.toHaveBeenCalled();
+    expect(fakeProvider.generateChatResponse).toHaveBeenCalledWith([
+      ...previousMessages,
+      userMessage,
+    ]);
 
-    expect(fakeProvider.generateChatResponse).toHaveBeenCalledWith(
-      updatedConversation.messages
+    expect(fakeConversationService.completeTurn).toHaveBeenCalledWith(
+      conversation.id,
+      userId,
+      {
+        role: "assistant",
+        content: "Your name is Alex.",
+      }
     );
 
-    expect(result.conversationId).toBe(existingConversation.id);
+    expect(result.conversationId).toBe(conversation.id);
   });
 
-  it("should throw a 404 error when the conversation does not exist", async () => {
+  it("does not call the provider when starting the conversation fails", async () => {
+    const authorizationError = new Error("Access denied");
+
     const fakeProvider: AgentProvider = {
       generateChatResponse: vi.fn(),
     };
 
     const fakeConversationService = {
-      createConversation: vi.fn(),
-      getConversation: vi.fn().mockResolvedValue(undefined),
-      addMessage: vi.fn(),
+      startTurn: vi.fn().mockRejectedValue(authorizationError),
+      completeTurn: vi.fn(),
     } as unknown as ConversationService;
 
     const service = new AgentChatService(
@@ -157,56 +267,23 @@ describe("Agent Chat Service", () => {
     );
 
     await expect(
-      service.chat({
-        message: "Hello",
-        conversationId: "missing-conversation-id",
+      service.chat(userId, {
+        message: "Unauthorized request",
+        scope: "personal",
       })
-    ).rejects.toMatchObject({
-      message: "Conversation not found.",
-      statusCode: 404,
-    });
+    ).rejects.toBe(authorizationError);
 
     expect(fakeProvider.generateChatResponse).not.toHaveBeenCalled();
-    expect(fakeConversationService.addMessage).not.toHaveBeenCalled();
+    expect(fakeConversationService.completeTurn).not.toHaveBeenCalled();
   });
 
-  it("should stop if saving the user message fails", async () => {
-    const conversation = createMockConversation();
-
-    const fakeProvider: AgentProvider = {
-      generateChatResponse: vi.fn(),
-    };
-
-    const fakeConversationService = {
-      createConversation: vi.fn().mockResolvedValue(conversation),
-      getConversation: vi.fn(),
-      addMessage: vi.fn().mockResolvedValue(undefined),
-    } as unknown as ConversationService;
-
-    const service = new AgentChatService(
-      fakeProvider,
-      fakeConversationService
-    );
-
-    await expect(
-      service.chat({ message: "Hello" })
-    ).rejects.toMatchObject({
-      statusCode: 500,
-      message: "Conversation could not be updated.",
-    });
-
-    expect(fakeProvider.generateChatResponse).not.toHaveBeenCalled();
-  });
-
-  it("should propagate AI provider errors", async () => {
-    const conversation = createMockConversation();
-
-    const userMessage = {
-      role: "user" as const,
-      content: "Hello",
-    };
-
-    const updatedConversation = createMockConversation([userMessage]);
+  it("propagates AI provider errors without saving an assistant response", async () => {
+    const conversation = createMockConversation([
+      {
+        role: "user",
+        content: "Hello",
+      },
+    ]);
 
     const providerError = new Error("AI provider failed");
 
@@ -215,9 +292,8 @@ describe("Agent Chat Service", () => {
     };
 
     const fakeConversationService = {
-      createConversation: vi.fn().mockResolvedValue(conversation),
-      getConversation: vi.fn(),
-      addMessage: vi.fn().mockResolvedValue(updatedConversation),
+      startTurn: vi.fn().mockResolvedValue(conversation),
+      completeTurn: vi.fn(),
     } as unknown as ConversationService;
 
     const service = new AgentChatService(
@@ -226,47 +302,48 @@ describe("Agent Chat Service", () => {
     );
 
     await expect(
-      service.chat({ message: "Hello" })
+      service.chat(userId, {
+        message: "Hello",
+        scope: "personal",
+      })
     ).rejects.toBe(providerError);
 
-    expect(fakeConversationService.addMessage).toHaveBeenCalledOnce();
+    expect(fakeConversationService.startTurn).toHaveBeenCalledOnce();
+    expect(fakeConversationService.completeTurn).not.toHaveBeenCalled();
   });
 
-  it("should throw when saving the assistant response fails", async () => {
-    const conversation = createMockConversation();
-
-    const updatedConversation = createMockConversation([
-        {
+  it("propagates errors when saving the assistant response fails", async () => {
+    const conversation = createMockConversation([
+      {
         role: "user",
         content: "Hello",
-        },
+      },
     ]);
 
+    const persistenceError = new Error("Permission revoked");
+
     const fakeProvider: AgentProvider = {
-        generateChatResponse: vi.fn().mockResolvedValue("Hello there!"),
+      generateChatResponse: vi.fn().mockResolvedValue("Hello there!"),
     };
 
     const fakeConversationService = {
-        createConversation: vi.fn().mockResolvedValue(conversation),
-        getConversation: vi.fn(),
-        addMessage: vi.fn()
-        .mockResolvedValueOnce(updatedConversation)
-        .mockResolvedValueOnce(undefined),
+      startTurn: vi.fn().mockResolvedValue(conversation),
+      completeTurn: vi.fn().mockRejectedValue(persistenceError),
     } as unknown as ConversationService;
 
     const service = new AgentChatService(
-        fakeProvider,
-        fakeConversationService
+      fakeProvider,
+      fakeConversationService
     );
 
     await expect(
-        service.chat({ message: "Hello" })
-    ).rejects.toMatchObject({
-        message: "Conversation could not be updated.",
-        statusCode: 500,
-    });
+      service.chat(userId, {
+        message: "Hello",
+        scope: "personal",
+      })
+    ).rejects.toBe(persistenceError);
 
     expect(fakeProvider.generateChatResponse).toHaveBeenCalledOnce();
-    expect(fakeConversationService.addMessage).toHaveBeenCalledTimes(2);
+    expect(fakeConversationService.completeTurn).toHaveBeenCalledOnce();
   });
 });
