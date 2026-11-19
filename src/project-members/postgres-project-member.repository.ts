@@ -16,6 +16,8 @@ import type { ProjectMemberRepository } from "./project-member.repository.js";
 import type {
   CreateProjectMemberInput,
   ProjectMember,
+  ProjectMemberRole,
+  ProjectMemberStatus,
 } from "./project-member.types.js";
 
 interface ProjectMemberRow {
@@ -28,8 +30,7 @@ interface ProjectMemberRow {
 }
 
 export class PostgresProjectMemberRepository
-  implements ProjectMemberRepository
-{
+  implements ProjectMemberRepository {
   private readonly transactionManager: TransactionManager;
 
   constructor(
@@ -177,5 +178,78 @@ export class PostgresProjectMemberRepository
     return result.rows.map((row) =>
       this.mapProjectMember(row)
     );
+  }
+
+  async updateRole(
+    projectId: string,
+    userId: string,
+    role: ProjectMemberRole,
+    client: PoolClient
+  ): Promise<ProjectMember | undefined> {
+    const result = await client.query<ProjectMemberRow>(
+      `
+      UPDATE project_members
+      SET role = $3
+      WHERE project_id = $1
+        AND user_id = $2
+      RETURNING
+        project_id,
+        organization_id,
+        user_id,
+        role,
+        status,
+        joined_at
+    `,
+      [projectId, userId, role]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapProjectMember(row) : undefined;
+  }
+
+  async updateStatus(
+    projectId: string,
+    userId: string,
+    status: ProjectMemberStatus,
+    client: PoolClient
+  ): Promise<ProjectMember | undefined> {
+    const result = await client.query<ProjectMemberRow>(
+      `
+      UPDATE project_members
+      SET status = $3
+      WHERE project_id = $1
+        AND user_id = $2
+      RETURNING
+        project_id,
+        organization_id,
+        user_id,
+        role,
+        status,
+        joined_at
+    `,
+      [projectId, userId, status]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapProjectMember(row) : undefined;
+  }
+
+  async delete(
+    projectId: string,
+    userId: string,
+    client: PoolClient
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      DELETE FROM project_members
+      WHERE project_id = $1
+        AND user_id = $2
+    `,
+      [projectId, userId]
+    );
+
+    return result.rowCount !== null && result.rowCount > 0;
   }
 }

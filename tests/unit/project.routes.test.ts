@@ -23,6 +23,16 @@ const mocks = vi.hoisted(() => ({
     update: vi.fn(),
     updateStatus: vi.fn(),
   },
+  projectMemberController: {
+    list: vi.fn(),
+    add: vi.fn(),
+    updateRole: vi.fn(),
+    updateStatus: vi.fn(),
+    remove: vi.fn(),
+    assignCustomRole: vi.fn(),
+    removeCustomRole: vi.fn(),
+    transferOwnership: vi.fn(),
+  },
   authMiddleware: {
     requireAuth: vi.fn(),
   },
@@ -30,6 +40,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../src/container/project.container.js", () => ({
   projectController: mocks.projectController,
+}));
+
+vi.mock("../../src/container/project.container.js", () => ({
+  projectController: mocks.projectController,
+  projectMemberController: mocks.projectMemberController,
 }));
 
 vi.mock("../../src/container/auth.container.js", () => ({
@@ -123,6 +138,71 @@ describe("Project HTTP Routes", () => {
             ...validProject,
             status: "active",
           },
+        })
+    );
+
+    mocks.projectMemberController.list.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          members: [],
+        })
+    );
+
+    mocks.projectMemberController.add.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(201).json({
+          success: true,
+          message: "Project member added successfully.",
+          member: { userId: "33333333-3333-4333-8333-333333333333" },
+        })
+    );
+
+    mocks.projectMemberController.updateRole.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          message: "Project member role updated successfully.",
+        })
+    );
+
+    mocks.projectMemberController.updateStatus.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          message: "Project member status updated successfully.",
+        })
+    );
+
+    mocks.projectMemberController.remove.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          message: "Project member removed successfully.",
+        })
+    );
+
+    mocks.projectMemberController.assignCustomRole.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          message: "Project custom role assigned successfully.",
+        })
+    );
+
+    mocks.projectMemberController.removeCustomRole.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          message: "Project custom role removed successfully.",
+        })
+    );
+
+    mocks.projectMemberController.transferOwnership.mockImplementation(
+      (_req: Request, res: Response) =>
+        res.status(200).json({
+          success: true,
+          message: "Project ownership transferred successfully.",
         })
     );
   });
@@ -380,6 +460,258 @@ describe("Project HTTP Routes", () => {
     });
   });
 
+  describe("Project Member Routes", () => {
+    const userId = "33333333-3333-4333-8333-333333333333";
+
+    it("should list project members", async () => {
+      const response = await request(app)
+        .get(`/api/projects/${projectId}/members`)
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(200);
+      expect(response.body.members).toEqual([]);
+
+      expect(
+        mocks.projectMemberController.list
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should add a project member", async () => {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/members`)
+        .set("Origin", allowedOrigin)
+        .send({
+          userId,
+          role: "developer",
+        });
+
+      expect(response.status).toBe(201);
+
+      expect(
+        mocks.projectMemberController.add
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject project_owner when adding a member", async () => {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/members`)
+        .set("Origin", allowedOrigin)
+        .send({
+          userId,
+          role: "project_owner",
+        });
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.add
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should reject unexpected add-member properties", async () => {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/members`)
+        .set("Origin", allowedOrigin)
+        .send({
+          userId,
+          role: "developer",
+          status: "active",
+        });
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.add
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should update a member role", async () => {
+      const response = await request(app)
+        .patch(`/api/projects/${projectId}/members/${userId}/role`)
+        .set("Origin", allowedOrigin)
+        .send({ role: "technical_lead" });
+
+      expect(response.status).toBe(200);
+
+      expect(
+        mocks.projectMemberController.updateRole
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject project_owner in ordinary role updates", async () => {
+      const response = await request(app)
+        .patch(`/api/projects/${projectId}/members/${userId}/role`)
+        .set("Origin", allowedOrigin)
+        .send({ role: "project_owner" });
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.updateRole
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should update a member status", async () => {
+      const response = await request(app)
+        .patch(`/api/projects/${projectId}/members/${userId}/status`)
+        .set("Origin", allowedOrigin)
+        .send({ status: "suspended" });
+
+      expect(response.status).toBe(200);
+
+      expect(
+        mocks.projectMemberController.updateStatus
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject an unsupported member status", async () => {
+      const response = await request(app)
+        .patch(`/api/projects/${projectId}/members/${userId}/status`)
+        .set("Origin", allowedOrigin)
+        .send({ status: "deleted" });
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.updateStatus
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should remove a project member", async () => {
+      const response = await request(app)
+        .delete(`/api/projects/${projectId}/members/${userId}`)
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(200);
+
+      expect(
+        mocks.projectMemberController.remove
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should assign a project custom role", async () => {
+      const roleId = "44444444-4444-4444-8444-444444444444";
+
+      const response = await request(app)
+        .post(
+          `/api/projects/${projectId}/members/${userId}/roles/${roleId}`
+        )
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+
+      expect(
+        mocks.projectMemberController.assignCustomRole
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should remove a project custom role", async () => {
+      const roleId = "44444444-4444-4444-8444-444444444444";
+
+      const response = await request(app)
+        .delete(
+          `/api/projects/${projectId}/members/${userId}/roles/${roleId}`
+        )
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+
+      expect(
+        mocks.projectMemberController.removeCustomRole
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject an invalid custom role ID", async () => {
+      const response = await request(app)
+        .post(
+          `/api/projects/${projectId}/members/${userId}/roles/invalid-id`
+        )
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.assignCustomRole
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should reject an invalid project ID for custom role assignment", async () => {
+      const roleId = "44444444-4444-4444-8444-444444444444";
+
+      const response = await request(app)
+        .post(
+          `/api/projects/invalid-id/members/${userId}/roles/${roleId}`
+        )
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.assignCustomRole
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should reject an invalid user ID for custom role assignment", async () => {
+      const roleId = "44444444-4444-4444-8444-444444444444";
+
+      const response = await request(app)
+        .post(
+          `/api/projects/${projectId}/members/invalid-id/roles/${roleId}`
+        )
+        .set("Origin", allowedOrigin);
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.assignCustomRole
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should transfer project ownership", async () => {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/ownership/transfer`)
+        .set("Origin", allowedOrigin)
+        .send({ newOwnerUserId: userId });
+
+      expect(response.status).toBe(200);
+
+      expect(
+        mocks.projectMemberController.transferOwnership
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("should reject an invalid target user ID", async () => {
+      const response = await request(app)
+        .patch(`/api/projects/${projectId}/members/invalid-id/role`)
+        .set("Origin", allowedOrigin)
+        .send({ role: "developer" });
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.updateRole
+      ).not.toHaveBeenCalled();
+    });
+
+    it("should reject an unexpected ownership transfer property", async () => {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/ownership/transfer`)
+        .set("Origin", allowedOrigin)
+        .send({
+          newOwnerUserId: userId,
+          role: "project_owner",
+        });
+
+      expect(response.status).toBe(400);
+
+      expect(
+        mocks.projectMemberController.transferOwnership
+      ).not.toHaveBeenCalled();
+    });
+  });
+
   describe("Authentication", () => {
     it("should reject unauthenticated project requests", async () => {
       mocks.authMiddleware.requireAuth.mockImplementation(
@@ -434,6 +766,16 @@ describe("Project HTTP Routes", () => {
           .send({
             status: "active",
           }),
+
+        request(app)
+          .post(
+            `/api/projects/${projectId}/members/33333333-3333-4333-8333-333333333333/roles/44444444-4444-4444-8444-444444444444`
+          ),
+
+        request(app)
+          .delete(
+            `/api/projects/${projectId}/members/33333333-3333-4333-8333-333333333333/roles/44444444-4444-4444-8444-444444444444`
+          ),
       ];
 
       for (const endpoint of endpoints) {
@@ -445,7 +787,7 @@ describe("Project HTTP Routes", () => {
 
       expect(
         mocks.authMiddleware.requireAuth
-      ).toHaveBeenCalledTimes(5);
+      ).toHaveBeenCalledTimes(7);
     });
   });
 });

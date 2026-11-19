@@ -13,8 +13,10 @@ const mocks = {
   updateProjectStatus: vi.fn(),
   findOrganizationMember: vi.fn(),
   createProjectMember: vi.fn(),
-  findProjectMember: vi.fn(),
   assignProjectRole: vi.fn(),
+  assertPermission: vi.fn(),
+  hasPermission: vi.fn(),
+  hasProjectPermission: vi.fn(),
 };
 
 describe("ProjectService", () => {
@@ -42,15 +44,6 @@ describe("ProjectService", () => {
     joinedAt: new Date("2026-01-01T00:00:00.000Z"),
   };
 
-  const activeProjectMember = {
-    projectId: project.id,
-    organizationId,
-    userId,
-    role: "developer" as const,
-    status: "active" as const,
-    joinedAt: new Date("2026-01-01T00:00:00.000Z"),
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -73,7 +66,10 @@ describe("ProjectService", () => {
     );
 
     mocks.createProjectMember.mockResolvedValue({});
-    mocks.findProjectMember.mockResolvedValue(activeProjectMember);
+
+    mocks.assertPermission.mockResolvedValue(undefined);
+    mocks.hasPermission.mockResolvedValue(false);
+    mocks.hasProjectPermission.mockResolvedValue(false);
 
     service = new ProjectService(
       {
@@ -85,7 +81,6 @@ describe("ProjectService", () => {
       } as never,
       {
         create: mocks.createProjectMember,
-        findByProjectAndUser: mocks.findProjectMember,
       } as never,
       {
         findByOrganizationAndUser: mocks.findOrganizationMember,
@@ -94,13 +89,18 @@ describe("ProjectService", () => {
         assignProjectRole: mocks.assignProjectRole,
       } as never,
       {
+        assertPermission: mocks.assertPermission,
+        hasPermission: mocks.hasPermission,
+        hasProjectPermission: mocks.hasProjectPermission,
+      } as never,
+      {
         runInTransaction: mocks.runInTransaction,
       } as never
     );
   });
 
   describe("create", () => {
-    it("should create a project and assign the creator as project owner", async () => {
+    it("should require project.create and assign the creator as project owner", async () => {
       const result = await service.create(userId, {
         organizationId,
         name: "  AgentMacarthur  ",
@@ -112,6 +112,13 @@ describe("ProjectService", () => {
       expect(mocks.findOrganizationMember).toHaveBeenCalledWith(
         organizationId,
         userId,
+        expect.any(Object)
+      );
+
+      expect(mocks.assertPermission).toHaveBeenCalledWith(
+        organizationId,
+        userId,
+        "project.create",
         expect.any(Object)
       );
 
@@ -160,6 +167,7 @@ describe("ProjectService", () => {
         statusCode: 404,
       });
 
+      expect(mocks.assertPermission).not.toHaveBeenCalled();
       expect(mocks.createProject).not.toHaveBeenCalled();
       expect(mocks.createProjectMember).not.toHaveBeenCalled();
     });
@@ -179,7 +187,28 @@ describe("ProjectService", () => {
         statusCode: 404,
       });
 
+      expect(mocks.assertPermission).not.toHaveBeenCalled();
       expect(mocks.createProject).not.toHaveBeenCalled();
+    });
+
+    it("should reject project creation when project.create is denied", async () => {
+      mocks.assertPermission.mockRejectedValue(
+        Object.assign(new Error("Forbidden"), {
+          statusCode: 403,
+        })
+      );
+
+      await expect(
+        service.create(userId, {
+          organizationId,
+          name: "Unauthorized Project",
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+      });
+
+      expect(mocks.createProject).not.toHaveBeenCalled();
+      expect(mocks.createProjectMember).not.toHaveBeenCalled();
     });
 
     it("should propagate errors when project membership creation fails", async () => {
@@ -235,28 +264,59 @@ describe("ProjectService", () => {
   });
 
   describe("getById", () => {
-    it("should allow an active project member to view a project", async () => {
+    it("should allow project-specific view permission", async () => {
+      mocks.hasProjectPermission.mockResolvedValue(true);
+
       const result = await service.getById(project.id, userId);
 
       expect(result).toEqual(project);
 
-      expect(mocks.findProjectMember).toHaveBeenCalledWith(
+      expect(mocks.hasPermission).toHaveBeenCalledWith(
+        organizationId,
+        userId,
+        "organization.projects.view",
+        expect.any(Object)
+      );
+
+      expect(mocks.hasProjectPermission).toHaveBeenCalledWith(
+        organizationId,
         project.id,
         userId,
+        "project.view",
         expect.any(Object)
       );
     });
 
-    it("should allow organization admins without project membership", async () => {
-      mocks.findOrganizationMember.mockResolvedValue({
-        ...activeOrganizationMember,
-        role: "admin",
-      });
+    it("should allow organization-wide project view permission", async () => {
+      mocks.hasPermission.mockResolvedValue(true);
 
       const result = await service.getById(project.id, userId);
 
       expect(result).toEqual(project);
-      expect(mocks.findProjectMember).not.toHaveBeenCalled();
+      expect(mocks.hasProjectPermission).not.toHaveBeenCalled();
+    });
+
+    it("should not grant access based only on the legacy organization owner role", async () => {
+      mocks.findOrganizationMember.mockResolvedValue({
+        ...activeOrganizationMember,
+        role: "owner",
+      });
+
+      await expect(
+        service.getById(project.id, userId)
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
+
+      expect(mocks.hasProjectPermission).toHaveBeenCalled();
+    });
+
+    it("should hide projects from users without project view permission", async () => {
+      await expect(
+        service.getById(project.id, userId)
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
     });
 
     it("should deny suspended organization members", async () => {
@@ -270,19 +330,9 @@ describe("ProjectService", () => {
       ).rejects.toMatchObject({
         statusCode: 404,
       });
-    });
 
-    it("should deny suspended project members", async () => {
-      mocks.findProjectMember.mockResolvedValue({
-        ...activeProjectMember,
-        status: "suspended",
-      });
-
-      await expect(
-        service.getById(project.id, userId)
-      ).rejects.toMatchObject({
-        statusCode: 404,
-      });
+      expect(mocks.hasPermission).not.toHaveBeenCalled();
+      expect(mocks.hasProjectPermission).not.toHaveBeenCalled();
     });
 
     it("should hide projects that do not exist", async () => {
@@ -299,17 +349,22 @@ describe("ProjectService", () => {
   });
 
   describe("update", () => {
-    it("should allow project managers to update project details", async () => {
-      mocks.findProjectMember.mockResolvedValue({
-        ...activeProjectMember,
-        role: "project_manager",
-      });
+    it("should allow project.update permission", async () => {
+      mocks.hasProjectPermission.mockResolvedValue(true);
 
       const result = await service.update(project.id, userId, {
         name: "Updated Project",
       });
 
       expect(result).toEqual(project);
+
+      expect(mocks.hasProjectPermission).toHaveBeenCalledWith(
+        organizationId,
+        project.id,
+        userId,
+        "project.update",
+        expect.any(Object)
+      );
 
       expect(mocks.updateProject).toHaveBeenCalledWith(
         project.id,
@@ -319,21 +374,30 @@ describe("ProjectService", () => {
       );
     });
 
-    it("should allow organization owners without project membership", async () => {
-      mocks.findOrganizationMember.mockResolvedValue({
-        ...activeOrganizationMember,
-        role: "owner",
-      });
+    it("should allow organization-wide project management permission", async () => {
+      mocks.hasPermission.mockResolvedValue(true);
 
       await service.update(project.id, userId, {
         name: "Updated Project",
       });
 
+      expect(mocks.hasPermission).toHaveBeenCalledWith(
+        organizationId,
+        userId,
+        "organization.projects.manage",
+        expect.any(Object)
+      );
+
+      expect(mocks.hasProjectPermission).not.toHaveBeenCalled();
       expect(mocks.updateProject).toHaveBeenCalledOnce();
-      expect(mocks.findProjectMember).not.toHaveBeenCalled();
     });
 
-    it("should deny developers from updating project details", async () => {
+    it("should not grant update access based only on the legacy organization owner role", async () => {
+      mocks.findOrganizationMember.mockResolvedValue({
+        ...activeOrganizationMember,
+        role: "owner",
+      });
+
       await expect(
         service.update(project.id, userId, {
           name: "Unauthorized Update",
@@ -345,7 +409,19 @@ describe("ProjectService", () => {
       expect(mocks.updateProject).not.toHaveBeenCalled();
     });
 
-    it("should hide projects from users without organization access", async () => {
+    it("should deny users without project.update permission", async () => {
+      await expect(
+        service.update(project.id, userId, {
+          name: "Unauthorized Update",
+        })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+      });
+
+      expect(mocks.updateProject).not.toHaveBeenCalled();
+    });
+
+    it("should hide projects from users without active organization membership", async () => {
       mocks.findOrganizationMember.mockResolvedValue(undefined);
 
       await expect(
@@ -356,16 +432,15 @@ describe("ProjectService", () => {
         statusCode: 404,
       });
 
+      expect(mocks.hasPermission).not.toHaveBeenCalled();
+      expect(mocks.hasProjectPermission).not.toHaveBeenCalled();
       expect(mocks.updateProject).not.toHaveBeenCalled();
     });
   });
 
   describe("updateStatus", () => {
-    it("should allow project owners to change project status", async () => {
-      mocks.findProjectMember.mockResolvedValue({
-        ...activeProjectMember,
-        role: "project_owner",
-      });
+    it("should allow project.change_status permission", async () => {
+      mocks.hasProjectPermission.mockResolvedValue(true);
 
       const result = await service.updateStatus(
         project.id,
@@ -375,6 +450,14 @@ describe("ProjectService", () => {
 
       expect(result).toEqual(project);
 
+      expect(mocks.hasProjectPermission).toHaveBeenCalledWith(
+        organizationId,
+        project.id,
+        userId,
+        "project.change_status",
+        expect.any(Object)
+      );
+
       expect(mocks.updateProjectStatus).toHaveBeenCalledWith(
         project.id,
         organizationId,
@@ -383,22 +466,34 @@ describe("ProjectService", () => {
       );
     });
 
-    it("should allow project managers to change project status", async () => {
-      mocks.findProjectMember.mockResolvedValue({
-        ...activeProjectMember,
-        role: "project_manager",
-      });
+    it("should allow organization-wide project management permission", async () => {
+      mocks.hasPermission.mockResolvedValue(true);
 
       await service.updateStatus(project.id, userId, "on_hold");
 
+      expect(mocks.hasPermission).toHaveBeenCalledWith(
+        organizationId,
+        userId,
+        "organization.projects.manage",
+        expect.any(Object)
+      );
+
+      expect(mocks.hasProjectPermission).not.toHaveBeenCalled();
       expect(mocks.updateProjectStatus).toHaveBeenCalledOnce();
     });
 
-    it("should deny clients from changing project status", async () => {
-      mocks.findProjectMember.mockResolvedValue({
-        ...activeProjectMember,
-        role: "client",
+    it("should deny users without project.change_status permission", async () => {
+      await expect(
+        service.updateStatus(project.id, userId, "completed")
+      ).rejects.toMatchObject({
+        statusCode: 403,
       });
+
+      expect(mocks.updateProjectStatus).not.toHaveBeenCalled();
+    });
+
+    it("should not grant status access based only on the legacy project owner role", async () => {
+      mocks.hasProjectPermission.mockResolvedValue(false);
 
       await expect(
         service.updateStatus(project.id, userId, "completed")

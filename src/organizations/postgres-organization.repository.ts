@@ -133,6 +133,57 @@ export class PostgresOrganizationRepository
     );
   }
 
+  async findByIdForUpdate(
+    id: string,
+    client: PoolClient
+  ): Promise<Organization | undefined> {
+    const result = await client.query<OrganizationRow>(
+      `SELECT
+        id,
+        name,
+        slug,
+        type,
+        owner_user_id,
+        created_at,
+        updated_at
+      FROM organizations
+      WHERE id = $1
+      FOR UPDATE`,
+      [id]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapOrganization(row) : undefined;
+  }
+
+  async updateOwner(
+    id: string,
+    ownerUserId: string,
+    client: PoolClient
+  ): Promise<Organization | undefined> {
+    const result = await client.query<OrganizationRow>(
+      `UPDATE organizations
+       SET
+         owner_user_id = $2,
+         updated_at = NOW()
+       WHERE id = $1
+       RETURNING
+         id,
+         name,
+         slug,
+         type,
+         owner_user_id,
+         created_at,
+         updated_at`,
+      [id, ownerUserId]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapOrganization(row) : undefined;
+  }
+
   async findBySlug(
     slug: string,
     client?: PoolClient

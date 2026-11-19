@@ -1,16 +1,30 @@
+import type { PoolClient } from "pg";
 
 import type {
   Conversation,
   ConversationMessage,
+  CreateConversationInput,
 } from "./conversation.types.js";
 
 export interface ConversationRepository {
-  create(): Promise<Conversation>;
+  create(
+    input: CreateConversationInput,
+    client: PoolClient
+  ): Promise<Conversation>;
 
-  findById(id: string): Promise<Conversation | undefined>;
+  findById(
+    id: string,
+    client: PoolClient
+  ): Promise<Conversation | undefined>;
+
+  findByIdForUpdate(
+    id: string,
+    client: PoolClient
+  ): Promise<Conversation | undefined>;
 
   addMessage(
     conversationId: string,
-    message: ConversationMessage
+    message: ConversationMessage,
+    client: PoolClient
   ): Promise<Conversation | undefined>;
 }

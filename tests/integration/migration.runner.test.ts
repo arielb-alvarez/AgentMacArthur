@@ -355,6 +355,70 @@ describe("Migration Runner", () => {
     }
   });
 
+  it("should report migrations with uninitialized checksums", async () => {
+    const migrationsDirectory = path.resolve(
+      "tests/fixtures/checksum-migrations/initial"
+    );
+
+    await migrationTestPool.query(
+      "DROP TABLE IF EXISTS migration_checksum_test"
+    );
+
+    await migrationTestPool.query(
+      `DELETE FROM schema_migrations
+       WHERE name = '001_checksum_test.sql'`
+    );
+
+    try {
+      await runMigrations(migrationTestPool, {
+        migrationsDirectory,
+      });
+
+      // Simulate a legacy migration record created before
+      // checksum enforcement was introduced.
+      await migrationTestPool.query(
+        `ALTER TABLE schema_migrations
+         ALTER COLUMN checksum DROP NOT NULL`
+      );
+
+      await migrationTestPool.query(
+        `UPDATE schema_migrations
+         SET checksum = NULL
+         WHERE name = '001_checksum_test.sql'`
+      );
+
+      const migrations = await getMigrationStatus(
+        migrationTestPool,
+        { migrationsDirectory }
+      );
+
+      const migration = migrations.find(
+        (item) => item.name === "001_checksum_test.sql"
+      );
+
+      expect(migration).toBeDefined();
+      expect(migration?.status).toBe(
+        "CHECKSUM NOT INITIALIZED"
+      );
+      expect(migration?.checksum).toBeNull();
+      expect(migration?.expectedChecksum).toHaveLength(64);
+    } finally {
+      await migrationTestPool.query(
+        "DROP TABLE IF EXISTS migration_checksum_test"
+      );
+
+      await migrationTestPool.query(
+        `DELETE FROM schema_migrations
+         WHERE name = '001_checksum_test.sql'`
+      );
+
+      await migrationTestPool.query(
+        `ALTER TABLE schema_migrations
+         ALTER COLUMN checksum SET NOT NULL`
+      );
+    }
+  });
+
   it("should report missing migration files", async () => {
     const initialMigrationsDirectory = path.resolve(
       "tests/fixtures/deleted-migrations/initial"
@@ -400,7 +464,6 @@ describe("Migration Runner", () => {
       );
     }
   });
-
 
   it("should migrate legacy memberships and invitations into the role and permission foundations", async () => {
     const roleBaselineDirectory = path.resolve(
@@ -864,20 +927,22 @@ describe("Migration Runner", () => {
     const otherCustomRoleId =
       "50000000-0000-4000-8000-000000000001";
 
-    await migrationTestPool.query("BEGIN");
+    const organizationClient = await migrationTestPool.connect();
 
     try {
-      await migrationTestPool.query(
+      await organizationClient.query("BEGIN");
+
+      await organizationClient.query(
         `
-          INSERT INTO organizations (
-            id,
-            name,
-            slug,
-            type,
-            owner_user_id
-          )
-          VALUES ($1, $2, $3, 'team', $4)
-        `,
+      INSERT INTO organizations (
+        id,
+        name,
+        slug,
+        type,
+        owner_user_id
+      )
+      VALUES ($1, $2, $3, 'team', $4)
+    `,
         [
           otherOrganizationId,
           "Other Role Migration Test",
@@ -886,45 +951,47 @@ describe("Migration Runner", () => {
         ]
       );
 
-      await migrationTestPool.query(
+      await organizationClient.query(
         `
-          INSERT INTO organization_members (
-            organization_id,
-            user_id,
-            role,
-            status
-          )
-          VALUES ($1, $2, 'owner', 'active')
-        `,
+      INSERT INTO organization_members (
+        organization_id,
+        user_id,
+        role,
+        status
+      )
+      VALUES ($1, $2, 'owner', 'active')
+    `,
         [otherOrganizationId, userIds[1]]
       );
 
-      await migrationTestPool.query(
+      await organizationClient.query(
         `
-          INSERT INTO roles (
-            id,
-            organization_id,
-            scope,
-            key,
-            name,
-            is_system
-          )
-          VALUES (
-            $1,
-            $2,
-            'organization',
-            'custom_org_role',
-            'Custom Organization Role',
-            FALSE
-          )
-        `,
+      INSERT INTO roles (
+        id,
+        organization_id,
+        scope,
+        key,
+        name,
+        is_system
+      )
+      VALUES (
+        $1,
+        $2,
+        'organization',
+        'custom_org_role',
+        'Custom Organization Role',
+        FALSE
+      )
+    `,
         [otherCustomRoleId, otherOrganizationId]
       );
 
-      await migrationTestPool.query("COMMIT");
+      await organizationClient.query("COMMIT");
     } catch (error) {
-      await migrationTestPool.query("ROLLBACK");
+      await organizationClient.query("ROLLBACK");
       throw error;
+    } finally {
+      organizationClient.release();
     }
 
     // A custom role cannot be used outside its owning organization.
@@ -1167,5 +1234,555 @@ describe("Migration Runner", () => {
     );
 
     expect(migration005?.status).toBe("EXECUTED");
+
+    // Verify Migration 006 was recorded.
+    const migration006Result =
+      await migrationTestPool.query<{ count: string }>(
+        `
+          SELECT COUNT(*)::text AS count
+          FROM schema_migrations
+          WHERE name = '006_enforce_pending_invitation_uniqueness.sql'
+        `
+      );
+
+    expect(migration006Result.rows[0].count).toBe("1");
+
+    const migration006 = migrationStatus.find(
+      (migration) =>
+        migration.name ===
+        "006_enforce_pending_invitation_uniqueness.sql"
+    );
+
+    expect(migration006?.status).toBe("EXECUTED");
+
+    // Verify Migration 007 was recorded.
+    const migration007Result =
+      await migrationTestPool.query<{ count: string }>(
+        `
+          SELECT COUNT(*)::text AS count
+          FROM schema_migrations
+          WHERE name = '007_remove_redundant_invitation_indexes.sql'
+        `
+      );
+
+    expect(migration007Result.rows[0].count).toBe("1");
+
+    const migration007 = migrationStatus.find(
+      (migration) =>
+        migration.name ===
+        "007_remove_redundant_invitation_indexes.sql"
+    );
+
+    expect(migration007?.status).toBe("EXECUTED");
+
+    // Verify Migration 008 was recorded.
+    const migration008Result =
+      await migrationTestPool.query<{ count: string }>(
+        `
+          SELECT COUNT(*)::text AS count
+          FROM schema_migrations
+          WHERE name = '008_track_invitation_delivery_attempts.sql'
+        `
+      );
+
+    expect(migration008Result.rows[0].count).toBe("1");
+
+    const migration008 = migrationStatus.find(
+      (migration) =>
+        migration.name ===
+        "008_track_invitation_delivery_attempts.sql"
+    );
+
+    expect(migration008?.status).toBe("EXECUTED");
+
+    // Verify the delivery-attempt columns and their types.
+    const deliveryColumns = await migrationTestPool.query<{
+      column_name: string;
+      data_type: string;
+    }>(
+      `
+        SELECT
+          column_name,
+          data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'invitations'
+          AND column_name IN (
+            'email_delivery_attempt_id',
+            'email_delivery_started_at'
+          )
+        ORDER BY column_name
+      `
+    );
+
+    expect(deliveryColumns.rows).toEqual([
+      {
+        column_name: "email_delivery_attempt_id",
+        data_type: "uuid",
+      },
+      {
+        column_name: "email_delivery_started_at",
+        data_type: "timestamp with time zone",
+      },
+    ]);
+
+    // Verify the delivery-attempt constraint exists.
+    const deliveryConstraint = await migrationTestPool.query<{
+      constraint_name: string;
+    }>(
+      `
+        SELECT conname AS constraint_name
+        FROM pg_constraint
+        WHERE conrelid = 'public.invitations'::regclass
+          AND conname =
+            'invitations_delivery_attempt_state_check'
+      `
+    );
+
+    expect(deliveryConstraint.rows).toEqual([
+      {
+        constraint_name:
+          "invitations_delivery_attempt_state_check",
+      },
+    ]);
+
+    // Verify the constraint permits a valid active delivery attempt
+    // and rejects an active attempt on a revoked invitation.
+    const constraintTestClient =
+      await migrationTestPool.connect();
+
+    try {
+      await constraintTestClient.query("BEGIN");
+
+      const fixtureInvitationId =
+        "40000000-0000-4000-8000-000000000002";
+
+      await constraintTestClient.query(
+        `
+          UPDATE invitations
+          SET
+            email = 'migration-008-constraint-test@example.com',
+            status = 'pending',
+            expires_at = NOW() + INTERVAL '7 days',
+            email_delivery_attempt_id =
+              '50000000-0000-4000-8000-000000000001',
+            email_delivery_started_at = NOW()
+          WHERE id = $1
+        `,
+        [fixtureInvitationId]
+      );
+
+      const validAttempt =
+        await constraintTestClient.query<{
+          email_delivery_attempt_id: string | null;
+        }>(
+          `
+            SELECT email_delivery_attempt_id
+            FROM invitations
+            WHERE id = $1
+          `,
+          [fixtureInvitationId]
+        );
+
+      expect(
+        validAttempt.rows[0]?.email_delivery_attempt_id
+      ).toBe("50000000-0000-4000-8000-000000000001");
+
+      await constraintTestClient.query(
+        "SAVEPOINT invalid_delivery_state"
+      );
+
+      await expect(
+        constraintTestClient.query(
+          `
+            UPDATE invitations
+            SET status = 'revoked'
+            WHERE id = $1
+          `,
+          [fixtureInvitationId]
+        )
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "invitations_delivery_attempt_state_check",
+      });
+
+      await constraintTestClient.query(
+        "ROLLBACK TO SAVEPOINT invalid_delivery_state"
+      );
+
+      await constraintTestClient.query("ROLLBACK");
+    } catch (error) {
+      await constraintTestClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      constraintTestClient.release();
+    }
+
+    // Verify the original unique indexes from Migration 003 remain.
+    // Verify the redundant indexes from Migration 006 were removed.
+    const invitationIndexes = await migrationTestPool.query<{
+      indexname: string;
+      is_unique: boolean;
+    }>(
+      `
+        SELECT
+          index_class.relname AS indexname,
+          index_info.indisunique AS is_unique
+        FROM pg_index index_info
+        JOIN pg_class index_class
+          ON index_class.oid = index_info.indexrelid
+        JOIN pg_namespace index_schema
+          ON index_schema.oid = index_class.relnamespace
+        WHERE index_schema.nspname = 'public'
+          AND index_class.relname IN (
+            'idx_invitations_pending_organization_email',
+            'idx_invitations_pending_project_email',
+            'idx_invitations_unique_pending_organization_email',
+            'idx_invitations_unique_pending_project_email'
+          )
+      `
+    );
+
+    expect(invitationIndexes.rows).toHaveLength(2);
+
+    expect(invitationIndexes.rows).toEqual(
+      expect.arrayContaining([
+        {
+          indexname:
+            "idx_invitations_pending_organization_email",
+          is_unique: true,
+        },
+        {
+          indexname:
+            "idx_invitations_pending_project_email",
+          is_unique: true,
+        },
+      ])
+    );
+
+    expect(invitationIndexes.rows).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          indexname:
+            "idx_invitations_unique_pending_organization_email",
+        }),
+        expect.objectContaining({
+          indexname:
+            "idx_invitations_unique_pending_project_email",
+        }),
+      ])
+    );
+  });
+
+  it("should enforce exactly one active project owner at the database level", async () => {
+    const userIds = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+      "10000000-0000-4000-8000-000000000003",
+      "10000000-0000-4000-8000-000000000004",
+      "10000000-0000-4000-8000-000000000005",
+      "10000000-0000-4000-8000-000000000006",
+      "10000000-0000-4000-8000-000000000007",
+      "10000000-0000-4000-8000-000000000008",
+    ];
+
+    const organizationId =
+      "20000000-0000-4000-8000-000000000001";
+
+    const projectId =
+      "30000000-0000-4000-8000-000000000001";
+
+    // Verify the project owner invariant at the database level.
+    const expectOwnerConstraintFailure = async (
+      statement: string,
+      values: unknown[] = []
+    ): Promise<void> => {
+      const constraintClient = await migrationTestPool.connect();
+
+      try {
+        await constraintClient.query("BEGIN");
+        await constraintClient.query(statement, values);
+
+        await expect(
+          constraintClient.query("COMMIT")
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint: "project_members_exactly_one_active_owner",
+        });
+      } finally {
+        await constraintClient.query("ROLLBACK").catch(() => undefined);
+        constraintClient.release();
+      }
+    };
+
+    // An owner cannot be suspended.
+    await expectOwnerConstraintFailure(
+      `
+        UPDATE project_members
+        SET status = 'suspended'
+        WHERE project_id = $1
+          AND user_id = $2
+      `,
+      [projectId, userIds[0]]
+    );
+
+    // An owner cannot be deleted.
+    await expectOwnerConstraintFailure(
+      `
+        DELETE FROM project_members
+        WHERE project_id = $1
+          AND user_id = $2
+      `,
+      [projectId, userIds[0]]
+    );
+
+    // An owner cannot be demoted.
+    await expectOwnerConstraintFailure(
+      `
+        UPDATE project_members
+        SET role = 'project_manager'
+        WHERE project_id = $1
+          AND user_id = $2
+      `,
+      [projectId, userIds[0]]
+    );
+
+    // The partial unique index rejects a second owner immediately.
+    const duplicateOwnerClient = await migrationTestPool.connect();
+
+    try {
+      await duplicateOwnerClient.query("BEGIN");
+
+      await expect(
+        duplicateOwnerClient.query(
+          `
+            UPDATE project_members
+            SET role = 'project_owner'
+            WHERE project_id = $1
+              AND user_id = $2
+          `,
+          [projectId, userIds[1]]
+        )
+      ).rejects.toMatchObject({
+        code: "23505",
+        constraint: "project_members_one_owner_per_project",
+      });
+
+      await duplicateOwnerClient.query("ROLLBACK");
+    } finally {
+      duplicateOwnerClient.release();
+    }
+
+    // Creating a project without an owner must fail at commit.
+    const ownerlessProjectId =
+      "30000000-0000-4000-8000-000000000002";
+
+    await expectOwnerConstraintFailure(
+      `
+        INSERT INTO projects (
+          id,
+          organization_id,
+          name,
+          created_by
+        )
+        VALUES ($1, $2, $3, $4)
+      `,
+      [
+        ownerlessProjectId,
+        organizationId,
+        "Ownerless Project",
+        userIds[0],
+      ]
+    );
+
+    // Project creation with an owner in the same transaction succeeds.
+    const validProjectId =
+      "30000000-0000-4000-8000-000000000003";
+
+    const projectCreationClient = await migrationTestPool.connect();
+
+    try {
+      await projectCreationClient.query("BEGIN");
+
+      await projectCreationClient.query(
+        `
+          INSERT INTO projects (
+            id,
+            organization_id,
+            name,
+            created_by
+          )
+          VALUES ($1, $2, $3, $4)
+        `,
+        [
+          validProjectId,
+          organizationId,
+          "Valid Owner Project",
+          userIds[0],
+        ]
+      );
+
+      await projectCreationClient.query(
+        `
+          INSERT INTO project_members (
+            project_id,
+            organization_id,
+            user_id,
+            role,
+            status
+          )
+          VALUES ($1, $2, $3, 'project_owner', 'active')
+        `,
+        [validProjectId, organizationId, userIds[0]]
+      );
+
+      await projectCreationClient.query("COMMIT");
+    } catch (error) {
+      await projectCreationClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      projectCreationClient.release();
+    }
+
+    // A valid ownership transfer may temporarily have zero owners,
+    // provided the transaction finishes with exactly one active owner.
+    const transferClient = await migrationTestPool.connect();
+
+    try {
+      await transferClient.query("BEGIN");
+
+      await transferClient.query(
+        `
+          UPDATE project_members
+          SET role = 'project_manager'
+          WHERE project_id = $1
+            AND user_id = $2
+        `,
+        [projectId, userIds[0]]
+      );
+
+      await transferClient.query(
+        `
+          UPDATE project_members
+          SET role = 'project_owner'
+          WHERE project_id = $1
+            AND user_id = $2
+        `,
+        [projectId, userIds[1]]
+      );
+
+      await transferClient.query("COMMIT");
+    } catch (error) {
+      await transferClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      transferClient.release();
+    }
+
+    const finalOwners = await migrationTestPool.query<{
+      user_id: string;
+      role: string;
+      status: string;
+    }>(
+      `
+        SELECT user_id, role, status
+        FROM project_members
+        WHERE project_id = $1
+          AND role = 'project_owner'
+      `,
+      [projectId]
+    );
+
+    expect(finalOwners.rows).toEqual([
+      {
+        user_id: userIds[1],
+        role: "project_owner",
+        status: "active",
+      },
+    ]);
+  });
+
+  it("should preserve the single-owner invariant during concurrent ownership transfers", async () => {
+    const projectId =
+      "30000000-0000-4000-8000-000000000001";
+
+    const currentOwnerId =
+      "10000000-0000-4000-8000-000000000002";
+
+    const candidateOwnerIds = [
+      "10000000-0000-4000-8000-000000000003",
+      "10000000-0000-4000-8000-000000000004",
+    ];
+
+    const attemptTransfer = async (
+      newOwnerId: string
+    ): Promise<void> => {
+      const client = await migrationTestPool.connect();
+
+      try {
+        await client.query("BEGIN");
+
+        await client.query(
+          `
+          UPDATE project_members
+          SET role = 'project_manager'
+          WHERE project_id = $1
+            AND user_id = $2
+        `,
+          [projectId, currentOwnerId]
+        );
+
+        await client.query(
+          `
+          UPDATE project_members
+          SET role = 'project_owner'
+          WHERE project_id = $1
+            AND user_id = $2
+        `,
+          [projectId, newOwnerId]
+        );
+
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    };
+
+    const results = await Promise.allSettled(
+      candidateOwnerIds.map(attemptTransfer)
+    );
+
+    const successfulTransfers = results.filter(
+      (result) => result.status === "fulfilled"
+    );
+
+    const failedTransfers = results.filter(
+      (result) => result.status === "rejected"
+    );
+
+    expect(successfulTransfers).toHaveLength(1);
+    expect(failedTransfers).toHaveLength(1);
+
+    const owners = await migrationTestPool.query<{
+      user_id: string;
+      role: string;
+      status: string;
+    }>(
+      `
+      SELECT user_id, role, status
+      FROM project_members
+      WHERE project_id = $1
+        AND role = 'project_owner'
+    `,
+      [projectId]
+    );
+
+    expect(owners.rows).toHaveLength(1);
+    expect(owners.rows[0]?.role).toBe("project_owner");
+    expect(owners.rows[0]?.status).toBe("active");
+    expect(candidateOwnerIds).toContain(owners.rows[0]?.user_id);
   });
 });

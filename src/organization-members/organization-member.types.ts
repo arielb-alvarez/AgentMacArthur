@@ -24,6 +24,11 @@ export interface CreateOrganizationMemberInput {
   status: OrganizationMemberStatus;
 }
 
+export interface OrganizationMemberDirectoryEntry {
+  userId: string;
+  displayName: string;
+}
+
 export interface OrganizationMemberAssignedRole {
   key: string;
   name: string;

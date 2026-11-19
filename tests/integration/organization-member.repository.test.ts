@@ -109,6 +109,104 @@ describe("PostgresOrganizationMemberRepository", () => {
     expect(membership.joinedAt).toBeInstanceOf(Date);
   });
 
+  it("should update an organization membership status", async () => {
+    const owner = await createOwner();
+    const { organization } = await createOrganizationForOwner(owner.id);
+
+    const member = await userRepository.create({
+      email: "member@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Member",
+    });
+
+    await repository.create({
+      organizationId: organization.id,
+      userId: member.id,
+      role: "member",
+      status: "active",
+    });
+
+    const updated = await repository.updateStatus(
+      organization.id,
+      member.id,
+      "suspended"
+    );
+
+    expect(updated).toMatchObject({
+      organizationId: organization.id,
+      userId: member.id,
+      role: "member",
+      status: "suspended",
+    });
+    expect(updated?.joinedAt).toBeInstanceOf(Date);
+
+    const persisted = await repository.findByOrganizationAndUser(
+      organization.id,
+      member.id
+    );
+
+    expect(persisted?.status).toBe("suspended");
+  });
+
+  it("should update an organization membership legacy role", async () => {
+    const owner = await createOwner();
+    const { organization } = await createOrganizationForOwner(owner.id);
+
+    const member = await userRepository.create({
+      email: "member@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Member",
+    });
+
+    await repository.create({
+      organizationId: organization.id,
+      userId: member.id,
+      role: "member",
+      status: "active",
+    });
+
+    const updated = await repository.updateRole(
+      organization.id,
+      member.id,
+      "admin"
+    );
+
+    expect(updated).toMatchObject({
+      organizationId: organization.id,
+      userId: member.id,
+      role: "admin",
+      status: "active",
+    });
+    expect(updated?.joinedAt).toBeInstanceOf(Date);
+
+    const persisted = await repository.findByOrganizationAndUser(
+      organization.id,
+      member.id
+    );
+
+    expect(persisted?.role).toBe("admin");
+  });
+
+  it("should return undefined when updating the status of a missing membership", async () => {
+    const result = await repository.updateStatus(
+      "00000000-0000-4000-8000-000000000000",
+      "00000000-0000-4000-8000-000000000000",
+      "suspended"
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("should return undefined when updating the role of a missing membership", async () => {
+    const result = await repository.updateRole(
+      "00000000-0000-4000-8000-000000000000",
+      "00000000-0000-4000-8000-000000000000",
+      "admin"
+    );
+
+    expect(result).toBeUndefined();
+  });
+
   it("should find a member by organization ID and user ID", async () => {
     const user = await createOwner();
 
@@ -214,6 +312,76 @@ describe("PostgresOrganizationMemberRepository", () => {
     ).rejects.toThrow();
   });
 
+  it("should list only basic directory fields, including suspended members", async () => {
+    const owner = await createOwner();
+
+    const { organization } =
+      await createOrganizationForOwner(owner.id);
+
+    const activeMember = await userRepository.create({
+      email: "active@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Taylor",
+    });
+
+    const suspendedMember = await userRepository.create({
+      email: "suspended@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "Jordan",
+    });
+
+    await repository.create({
+      organizationId: organization.id,
+      userId: activeMember.id,
+      role: "member",
+      status: "active",
+    });
+
+    await repository.create({
+      organizationId: organization.id,
+      userId: suspendedMember.id,
+      role: "member",
+      status: "suspended",
+    });
+
+    const members = await repository.findAllBasicByOrganizationId(
+      organization.id
+    );
+
+    expect(members).toHaveLength(3);
+
+    expect(members).toEqual(
+      expect.arrayContaining([
+        {
+          userId: owner.id,
+          displayName: owner.displayName,
+        },
+        {
+          userId: activeMember.id,
+          displayName: activeMember.displayName,
+        },
+        {
+          userId: suspendedMember.id,
+          displayName: suspendedMember.displayName,
+        },
+      ])
+    );
+
+    for (const member of members) {
+      expect(Object.keys(member).sort()).toEqual([
+        "displayName",
+        "userId",
+      ]);
+    }
+  });
+
+  it("should return an empty basic directory for an organization without members", async () => {
+    const members = await repository.findAllBasicByOrganizationId(
+      "00000000-0000-4000-8000-000000000000"
+    );
+
+    expect(members).toEqual([]);
+  });
 
   it("should list organization members with their assigned roles", async () => {
     const owner = await createOwner();

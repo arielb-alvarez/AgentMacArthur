@@ -21,6 +21,8 @@ import { PostgresOrganizationMemberRepository } from "../../src/organization-mem
 import { PostgresProjectRepository } from "../../src/projects/postgres-project.repository.js";
 import { PostgresProjectMemberRepository } from "../../src/project-members/postgres-project-member.repository.js";
 import { PostgresRoleAssignmentRepository } from "../../src/role-assignments/postgres-role-assignment.repository.js";
+import { PostgresOrganizationPermissionRepository } from "../../src/permissions/postgres-organization-permission.repository.js";
+import { OrganizationPermissionService } from "../../src/permissions/organization-permission.service.js";
 
 import { ProjectService } from "../../src/projects/project.service.js";
 
@@ -60,11 +62,23 @@ describe("ProjectService integration", () => {
       transactionManager
     );
 
+  const organizationPermissionRepository =
+    new PostgresOrganizationPermissionRepository(
+      testPool,
+      transactionManager
+    );
+
+  const organizationPermissionService =
+    new OrganizationPermissionService(
+      organizationPermissionRepository
+    );
+
   const projectService = new ProjectService(
     projectRepository,
     projectMemberRepository,
     organizationMemberRepository,
     roleAssignmentRepository,
+    organizationPermissionService,
     transactionManager
   );
 
@@ -106,6 +120,16 @@ describe("ProjectService integration", () => {
           client
         );
 
+        await roleAssignmentRepository.assignOrganizationRole(
+          {
+            organizationId: organization.id,
+            userId: ownerUserId,
+            roleKey: "owner",
+            assignedBy: ownerUserId,
+          },
+          client
+        );
+
         return organization;
       }
     );
@@ -116,12 +140,31 @@ describe("ProjectService integration", () => {
     userId: string,
     role: "admin" | "member" = "member"
   ) => {
-    return organizationMemberRepository.create({
-      organizationId,
-      userId,
-      role,
-      status: "active",
-    });
+    return transactionManager.runInTransaction(
+      "addTestOrganizationMember",
+      async (client) => {
+        const membership = await organizationMemberRepository.create(
+          {
+            organizationId,
+            userId,
+            role,
+            status: "active",
+          },
+          client
+        );
+
+        await roleAssignmentRepository.assignOrganizationRole(
+          {
+            organizationId,
+            userId,
+            roleKey: role,
+          },
+          client
+        );
+
+        return membership;
+      }
+    );
   };
 
   beforeAll(async () => {
@@ -400,6 +443,13 @@ describe("ProjectService integration", () => {
       status: "suspended",
     });
 
+    await roleAssignmentRepository.assignProjectRole({
+      projectId: project.id,
+      organizationId: organization.id,
+      userId: member.id,
+      roleKey: "developer",
+    });
+
     const projects = await projectService.list(member.id);
 
     expect(projects).toHaveLength(0);
@@ -466,6 +516,13 @@ describe("ProjectService integration", () => {
       userId: developer.id,
       role: "developer",
       status: "active",
+    });
+
+    await roleAssignmentRepository.assignProjectRole({
+      projectId: project.id,
+      organizationId: organization.id,
+      userId: developer.id,
+      roleKey: "developer",
     });
 
     await expect(
@@ -556,6 +613,7 @@ describe("ProjectService integration", () => {
       failingProjectMemberRepository,
       organizationMemberRepository,
       roleAssignmentRepository,
+      organizationPermissionService,
       transactionManager
     );
 
@@ -597,6 +655,7 @@ describe("ProjectService integration", () => {
       projectMemberRepository,
       organizationMemberRepository,
       failingRoleAssignmentRepository,
+      organizationPermissionService,
       transactionManager
     );
 
@@ -635,5 +694,251 @@ describe("ProjectService integration", () => {
 
     expect(roleAssignments.rows).toHaveLength(0);
     expect(memberships.rows).toHaveLength(0);
+  });
+
+  it("should query project memberships by project and user", async () => {
+    const owner = await createUser("repository-owner@example.com");
+    const member = await createUser("repository-member@example.com");
+
+    const organization = await createOrganization(
+      owner.id,
+      "repository-members-workspace"
+    );
+
+    await addOrganizationMember(organization.id, member.id);
+
+    const project = await projectService.create(owner.id, {
+      organizationId: organization.id,
+      name: "Repository Membership Project",
+    });
+
+    const createdMember = await projectMemberRepository.create({
+      projectId: project.id,
+      organizationId: organization.id,
+      userId: member.id,
+      role: "developer",
+    });
+
+    expect(createdMember.status).toBe("active");
+
+    const byProjectAndUser =
+      await projectMemberRepository.findByProjectAndUser(
+        project.id,
+        member.id
+      );
+
+    expect(byProjectAndUser).toMatchObject({
+      projectId: project.id,
+      organizationId: organization.id,
+      userId: member.id,
+      role: "developer",
+      status: "active",
+    });
+
+    const missingMember =
+      await projectMemberRepository.findByProjectAndUser(
+        project.id,
+        "00000000-0000-4000-8000-000000000004"
+      );
+
+    expect(missingMember).toBeUndefined();
+  });
+
+  it("should list project memberships by project and user", async () => {
+    const owner = await createUser("list-owner@example.com");
+    const member = await createUser("list-member@example.com");
+    const unrelatedUser = await createUser("list-unrelated@example.com");
+
+    const organization = await createOrganization(
+      owner.id,
+      "repository-list-workspace"
+    );
+
+    await addOrganizationMember(organization.id, member.id);
+    await addOrganizationMember(organization.id, unrelatedUser.id);
+
+    const project = await projectService.create(owner.id, {
+      organizationId: organization.id,
+      name: "Repository List Project",
+    });
+
+    await projectMemberRepository.create({
+      projectId: project.id,
+      organizationId: organization.id,
+      userId: member.id,
+      role: "developer",
+      status: "suspended",
+    });
+
+    const projectMembers =
+      await projectMemberRepository.findByProjectId(project.id);
+
+    expect(projectMembers).toHaveLength(2);
+    expect(projectMembers.map((item) => item.userId)).toContain(owner.id);
+    expect(projectMembers.map((item) => item.userId)).toContain(member.id);
+
+    const userMemberships =
+      await projectMemberRepository.findByUserId(member.id);
+
+    expect(userMemberships).toHaveLength(1);
+    expect(userMemberships[0]).toMatchObject({
+      projectId: project.id,
+      userId: member.id,
+      role: "developer",
+      status: "suspended",
+    });
+
+    expect(
+      await projectMemberRepository.findByUserId(unrelatedUser.id)
+    ).toHaveLength(0);
+  });
+
+  it("should filter accessible projects by organization", async () => {
+    const owner = await createUser("filter-owner@example.com");
+    const member = await createUser("filter-member@example.com");
+    const otherOwner = await createUser("filter-other@example.com");
+
+    const organization = await createOrganization(
+      owner.id,
+      "repository-filter-workspace"
+    );
+
+    const otherOrganization = await createOrganization(
+      otherOwner.id,
+      "repository-other-filter-workspace"
+    );
+
+    await addOrganizationMember(organization.id, member.id);
+    await addOrganizationMember(otherOrganization.id, member.id);
+
+    const project = await projectService.create(owner.id, {
+      organizationId: organization.id,
+      name: "Filtered Project",
+    });
+
+    await projectService.create(otherOwner.id, {
+      organizationId: otherOrganization.id,
+      name: "Other Filtered Project",
+    });
+
+    const filteredProjects =
+      await projectRepository.findAccessibleByUserId(
+        member.id,
+        organization.id
+      );
+
+    expect(filteredProjects).toHaveLength(0);
+
+    const ownerProjects =
+      await projectRepository.findAccessibleByUserId(
+        owner.id,
+        organization.id
+      );
+
+    expect(ownerProjects).toHaveLength(1);
+    expect(ownerProjects[0]?.id).toBe(project.id);
+  });
+
+  it("should update project descriptions including clearing them", async () => {
+    const owner = await createUser("description-owner@example.com");
+
+    const organization = await createOrganization(
+      owner.id,
+      "repository-description-workspace"
+    );
+
+    const project = await projectService.create(owner.id, {
+      organizationId: organization.id,
+      name: "Description Project",
+      description: "Original description",
+    });
+
+    const cleared = await projectRepository.update(
+      project.id,
+      organization.id,
+      { description: null }
+    );
+
+    expect(cleared?.description).toBeNull();
+
+    const renamed = await projectRepository.update(
+      project.id,
+      organization.id,
+      { name: "Renamed Description Project" }
+    );
+
+    expect(renamed?.name).toBe("Renamed Description Project");
+    expect(renamed?.description).toBeNull();
+  });
+
+  it("should return undefined when updating a project outside its organization", async () => {
+    const owner = await createUser("missing-owner@example.com");
+
+    const organization = await createOrganization(
+      owner.id,
+      "repository-missing-workspace"
+    );
+
+    const project = await projectService.create(owner.id, {
+      organizationId: organization.id,
+      name: "Existing Project",
+    });
+
+    const wrongOrganizationUpdate =
+      await projectRepository.update(
+        project.id,
+        "00000000-0000-4000-8000-000000000001",
+        { name: "Should Not Update" }
+      );
+
+    const missingStatusUpdate =
+      await projectRepository.updateStatus(
+        "00000000-0000-4000-8000-000000000002",
+        organization.id,
+        { status: "completed" }
+      );
+
+    expect(wrongOrganizationUpdate).toBeUndefined();
+    expect(missingStatusUpdate).toBeUndefined();
+  });
+
+  it("should find projects by ID and enforce organization scope", async () => {
+    const owner = await createUser("lookup-owner@example.com");
+    const otherOwner = await createUser("lookup-other@example.com");
+
+    const organization = await createOrganization(
+      owner.id,
+      "repository-lookup-workspace"
+    );
+
+    const otherOrganization = await createOrganization(
+      otherOwner.id,
+      "repository-other-lookup-workspace"
+    );
+
+    const project = await projectService.create(owner.id, {
+      organizationId: organization.id,
+      name: "Lookup Project",
+    });
+
+    await expect(
+      projectRepository.findById(project.id)
+    ).resolves.toMatchObject({
+      id: project.id,
+      organizationId: organization.id,
+    });
+
+    await expect(
+      projectRepository.findByIdAndOrganization(
+        project.id,
+        otherOrganization.id
+      )
+    ).resolves.toBeUndefined();
+
+    await expect(
+      projectRepository.findById(
+        "00000000-0000-4000-8000-000000000003"
+      )
+    ).resolves.toBeUndefined();
   });
 });

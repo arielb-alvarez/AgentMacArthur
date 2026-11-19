@@ -80,7 +80,7 @@ const envSchema = z
     DB_POOL_MAX: z.coerce
       .number()
       .int()
-      .min(1)
+      .min(2, "DB_POOL_MAX must be at least 2 for migration execution.")
       .max(100)
       .default(10),
 

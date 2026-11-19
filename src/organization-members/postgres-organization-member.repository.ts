@@ -18,6 +18,7 @@ import type {
   OrganizationMember,
   OrganizationMemberAssignedRole,
   OrganizationMemberDetails,
+  OrganizationMemberDirectoryEntry,
 } from "./organization-member.types.js";
 
 interface OrganizationMemberRow extends QueryResultRow {
@@ -26,6 +27,11 @@ interface OrganizationMemberRow extends QueryResultRow {
   role: OrganizationMember["role"];
   status: OrganizationMember["status"];
   joined_at: Date;
+}
+
+interface OrganizationMemberDirectoryRow extends QueryResultRow {
+  user_id: string;
+  display_name: string;
 }
 
 interface OrganizationMemberDetailsRow extends QueryResultRow {
@@ -40,8 +46,7 @@ interface OrganizationMemberDetailsRow extends QueryResultRow {
 }
 
 export class PostgresOrganizationMemberRepository
-  implements OrganizationMemberRepository
-{
+  implements OrganizationMemberRepository {
   private readonly transactionManager: TransactionManager;
 
   constructor(
@@ -128,6 +133,60 @@ export class PostgresOrganizationMemberRepository
     return this.mapOrganizationMember(result.rows[0]!);
   }
 
+  async updateStatus(
+    organizationId: string,
+    userId: string,
+    status: OrganizationMember["status"],
+    client?: PoolClient
+  ): Promise<OrganizationMember | undefined> {
+    const result = await this.execute<OrganizationMemberRow>(
+      "updateOrganizationMemberStatus",
+      client,
+      `UPDATE organization_members
+      SET status = $3
+      WHERE organization_id = $1
+        AND user_id = $2
+      RETURNING
+        organization_id,
+        user_id,
+        role,
+        status,
+        joined_at`,
+      [organizationId, userId, status]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapOrganizationMember(row) : undefined;
+  }
+
+  async updateRole(
+    organizationId: string,
+    userId: string,
+    role: OrganizationMember["role"],
+    client?: PoolClient
+  ): Promise<OrganizationMember | undefined> {
+    const result = await this.execute<OrganizationMemberRow>(
+      "updateOrganizationMemberRole",
+      client,
+      `UPDATE organization_members
+      SET role = $3
+      WHERE organization_id = $1
+        AND user_id = $2
+      RETURNING
+        organization_id,
+        user_id,
+        role,
+        status,
+        joined_at`,
+      [organizationId, userId, role]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapOrganizationMember(row) : undefined;
+  }
+
   async findByOrganizationAndUser(
     organizationId: string,
     userId: string,
@@ -175,6 +234,34 @@ export class PostgresOrganizationMemberRepository
     return result.rows.map((row) =>
       this.mapOrganizationMember(row)
     );
+  }
+
+  async findAllBasicByOrganizationId(
+    organizationId: string,
+    client?: PoolClient
+  ): Promise<OrganizationMemberDirectoryEntry[]> {
+    const result =
+      await this.execute<OrganizationMemberDirectoryRow>(
+        "findAllBasicOrganizationMembers",
+        client,
+        `SELECT
+          om.user_id,
+          u.display_name
+        FROM organization_members om
+        INNER JOIN users u
+          ON u.id = om.user_id
+        WHERE om.organization_id = $1
+        ORDER BY
+          om.joined_at ASC,
+          u.display_name ASC,
+          om.user_id ASC`,
+        [organizationId]
+      );
+
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      displayName: row.display_name,
+    }));
   }
 
   async findAllByOrganizationId(

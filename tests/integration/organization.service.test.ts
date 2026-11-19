@@ -64,6 +64,8 @@ describe("OrganizationService integration", () => {
     organizationRepository,
     organizationMemberRepository,
     organizationPermissionService,
+    userRepository,
+    roleAssignmentRepository,
     transactionManager
   );
 
@@ -78,9 +80,19 @@ describe("OrganizationService integration", () => {
     });
   };
 
+  const activateUser = async (userId: string) => {
+    await testPool.query(
+      `UPDATE users
+       SET status = 'active'
+       WHERE id = $1`,
+      [userId]
+    );
+  };
+
   const createOrganization = async (
     ownerUserId: string,
-    slug: string
+    slug: string,
+    type: "team" | "personal" = "team"
   ) => {
     return transactionManager.runInTransaction(
       "createTestOrganization",
@@ -89,7 +101,7 @@ describe("OrganizationService integration", () => {
           {
             name: `${slug} Workspace`,
             slug,
-            type: "team",
+            type,
             ownerUserId,
           },
           client
@@ -383,6 +395,267 @@ describe("OrganizationService integration", () => {
         )
       ).rejects.toMatchObject({
         statusCode: 404,
+      });
+    });
+
+    describe("transferOwnership", () => {
+      it("should transfer ownership and synchronize all owner representations", async () => {
+        const owner = await createUser("transfer-owner@example.com");
+        const target = await createUser("transfer-target@example.com");
+
+        await activateUser(target.id);
+
+        const organization = await createOrganization(
+          owner.id,
+          "ownership-transfer-workspace"
+        );
+
+        await addOrganizationMember(organization.id, target.id, "member");
+
+        const customRoleResult = await testPool.query<{ id: string }>(
+          `INSERT INTO roles (
+            organization_id,
+            scope,
+            key,
+            name,
+            description,
+            is_system
+          )
+          VALUES (
+            $1,
+            'organization',
+            'workspace_auditor',
+            'Workspace Auditor',
+            'Custom role used to verify ownership transfer preservation.',
+            FALSE
+          )
+          RETURNING id`,
+          [organization.id]
+        );
+
+        const customRoleId = customRoleResult.rows[0]!.id;
+
+        await testPool.query(
+          `INSERT INTO organization_member_roles (
+            organization_id,
+            user_id,
+            role_id,
+            assigned_by
+          )
+          VALUES
+            ($1, $2, $3, $4),
+            ($1, $5, $3, $4)`,
+          [
+            organization.id,
+            owner.id,
+            customRoleId,
+            owner.id,
+            target.id,
+          ]
+        );
+
+        const transferred = await organizationService.transferOwnership(
+          organization.id,
+          owner.id,
+          target.id
+        );
+
+        expect(transferred.ownerUserId).toBe(target.id);
+
+        const persistedOrganization = await organizationRepository.findById(
+          organization.id
+        );
+
+        expect(persistedOrganization?.ownerUserId).toBe(target.id);
+
+        const memberships = await testPool.query(
+          `SELECT user_id, role, status
+          FROM organization_members
+          WHERE organization_id = $1
+            AND user_id = ANY($2::uuid[])
+          ORDER BY user_id`,
+          [organization.id, [owner.id, target.id]]
+        );
+
+        const membershipByUserId = new Map(
+          memberships.rows.map((row) => [row.user_id, row])
+        );
+
+        expect(membershipByUserId.get(owner.id)).toMatchObject({
+          role: "admin",
+          status: "active",
+        });
+
+        expect(membershipByUserId.get(target.id)).toMatchObject({
+          role: "owner",
+          status: "active",
+        });
+
+        expect(
+          await roleAssignmentRepository.findOrganizationBaseRoles(
+            organization.id,
+            owner.id
+          )
+        ).toEqual(["admin"]);
+
+        expect(
+          await roleAssignmentRepository.findOrganizationBaseRoles(
+            organization.id,
+            target.id
+          )
+        ).toEqual(["owner"]);
+
+        const ownerCount = await testPool.query(
+          `SELECT COUNT(*)::int AS count
+          FROM organization_members
+          WHERE organization_id = $1
+            AND role = 'owner'`,
+          [organization.id]
+        );
+
+        expect(ownerCount.rows[0]?.count).toBe(1);
+
+        const customAssignments = await testPool.query<{
+          user_id: string;
+          key: string;
+        }>(
+          `SELECT
+              organization_member_roles.user_id,
+              roles.key
+            FROM organization_member_roles
+            INNER JOIN roles
+              ON roles.id = organization_member_roles.role_id
+            WHERE organization_member_roles.organization_id = $1
+              AND organization_member_roles.user_id = ANY($2::uuid[])
+              AND roles.is_system = FALSE
+            ORDER BY organization_member_roles.user_id`,
+          [organization.id, [owner.id, target.id]]
+        );
+
+        const customRolesByUserId = new Map(
+          customAssignments.rows.map((row) => [row.user_id, row.key])
+        );
+
+        expect(customRolesByUserId.get(owner.id)).toBe("workspace_auditor");
+        expect(customRolesByUserId.get(target.id)).toBe("workspace_auditor");
+      });
+
+      it("should deny an admin from transferring ownership", async () => {
+        const owner = await createUser("admin-transfer-owner@example.com");
+        const admin = await createUser("admin-transfer-admin@example.com");
+        const target = await createUser("admin-transfer-target@example.com");
+
+        const organization = await createOrganization(
+          owner.id,
+          "admin-transfer-workspace"
+        );
+
+        await addOrganizationMember(organization.id, admin.id, "admin");
+        await addOrganizationMember(organization.id, target.id, "member");
+
+        await expect(
+          organizationService.transferOwnership(
+            organization.id,
+            admin.id,
+            target.id
+          )
+        ).rejects.toMatchObject({
+          statusCode: 403,
+        });
+
+        const unchanged = await organizationRepository.findById(
+          organization.id
+        );
+
+        expect(unchanged?.ownerUserId).toBe(owner.id);
+
+        expect(
+          await roleAssignmentRepository.findOrganizationBaseRoles(
+            organization.id,
+            owner.id
+          )
+        ).toEqual(["owner"]);
+
+        expect(
+          await roleAssignmentRepository.findOrganizationBaseRoles(
+            organization.id,
+            target.id
+          )
+        ).toEqual(["member"]);
+      });
+
+      it("should roll back the transfer when the target already owns another personal organization", async () => {
+        const currentOwner = await createUser(
+          "personal-transfer-current-owner@example.com"
+        );
+        const target = await createUser(
+          "personal-transfer-target@example.com"
+        );
+
+        await activateUser(target.id);
+
+        const sourceOrganization = await createOrganization(
+          currentOwner.id,
+          "personal-transfer-source",
+          "personal"
+        );
+
+        await createOrganization(
+          target.id,
+          "personal-transfer-existing",
+          "personal"
+        );
+
+        await addOrganizationMember(
+          sourceOrganization.id,
+          target.id,
+          "member"
+        );
+
+        await expect(
+          organizationService.transferOwnership(
+            sourceOrganization.id,
+            currentOwner.id,
+            target.id
+          )
+        ).rejects.toMatchObject({
+          statusCode: 409,
+        });
+
+        const unchangedOrganization = await organizationRepository.findById(
+          sourceOrganization.id
+        );
+
+        expect(unchangedOrganization?.ownerUserId).toBe(currentOwner.id);
+
+        const memberships = await testPool.query(
+          `SELECT user_id, role
+          FROM organization_members
+          WHERE organization_id = $1
+            AND user_id = ANY($2::uuid[])`,
+          [sourceOrganization.id, [currentOwner.id, target.id]]
+        );
+
+        const membershipByUserId = new Map(
+          memberships.rows.map((row) => [row.user_id, row.role])
+        );
+
+        expect(membershipByUserId.get(currentOwner.id)).toBe("owner");
+        expect(membershipByUserId.get(target.id)).toBe("member");
+
+        expect(
+          await roleAssignmentRepository.findOrganizationBaseRoles(
+            sourceOrganization.id,
+            currentOwner.id
+          )
+        ).toEqual(["owner"]);
+
+        expect(
+          await roleAssignmentRepository.findOrganizationBaseRoles(
+            sourceOrganization.id,
+            target.id
+          )
+        ).toEqual(["member"]);
       });
     });
   });

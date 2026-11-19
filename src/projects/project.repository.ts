@@ -18,6 +18,11 @@ export interface ProjectRepository {
     client?: PoolClient
   ): Promise<Project | undefined>;
 
+  lockById(
+    id: string,
+    client: PoolClient
+  ): Promise<Project | undefined>;
+
   findByIdAndOrganization(
     id: string,
     organizationId: string,

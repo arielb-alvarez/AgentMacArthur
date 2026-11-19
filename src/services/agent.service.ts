@@ -22,24 +22,25 @@ export const openAIAgentProvider: AgentProvider = {
     const client = getClient();
 
     try {
-        const response = await client.responses.create({
-            model: env.OPENAI_MODEL,
-            instructions:
-            "You are AgentMacArthur, an AI software engineering assistant. You help developers understand, build, debug, and improve software.",
-            input: messages,
-        });
+      const response = await client.responses.create({
+        model: env.OPENAI_MODEL,
+        instructions:
+          "You are AgentMacArthur, an AI software engineering assistant. You help developers understand, build, debug, and improve software.",
+        input: messages,
+      });
 
-        return response.output_text;
+      return response.output_text;
     } catch (error) {
-        logger.error("OpenAI request failed", {
-            provider: "openai",
-            error: "insufficient_quota",
-        });
+      logger.error("OpenAI request failed", {
+        provider: "openai",
+        errorName:
+          error instanceof Error ? error.name : "UnknownError",
+      });
 
-        throw new AppError(
-            "Our AI service is temporarily unavailable. Please try again later.",
-            503
-        );
+      throw new AppError(
+        "Our AI service is temporarily unavailable. Please try again later.",
+        503
+      );
     }
   },
 };

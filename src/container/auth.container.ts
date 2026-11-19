@@ -1,5 +1,4 @@
 import { pool } from "../config/database.js";
-import { env } from "../config/env.js";
 
 import { PostgresTransactionManager } from "../database/transaction-manager.js";
 
@@ -17,8 +16,7 @@ import { UserService } from "../users/user.service.js";
 import { RegistrationService } from "../auth/registration.service.js";
 import { EmailVerificationService } from "../auth/email-verification.service.js";
 
-import { DevelopmentEmailService } from "../email/development-email.service.js";
-import type { EmailService } from "../email/email.service.js";
+import { emailService } from "./email.container.js";
 
 import { createAuthController } from "../controllers/auth.controller.js";
 import { createAuthenticationMiddleware } from "../middleware/auth.middleware.js";
@@ -81,20 +79,6 @@ export const authService = new AuthService(
   tokenService,
   transactionManager
 );
-
-// Production must use a real email provider.
-// Never silently log verification links in production.
-const createEmailService = (): EmailService => {
-  if (env.NODE_ENV === "production") {
-    throw new Error(
-      "A production email provider must be configured before authentication can start."
-    );
-  }
-
-  return new DevelopmentEmailService();
-};
-
-const emailService = createEmailService();
 
 const registrationService = new RegistrationService(
   userService,

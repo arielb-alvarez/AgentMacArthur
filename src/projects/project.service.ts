@@ -2,6 +2,7 @@ import { AppError } from "../errors/app.error.js";
 
 import type { TransactionManager } from "../database/transaction-manager.js";
 import type { OrganizationMemberRepository } from "../organization-members/organization-member.repository.js";
+import type { OrganizationPermissionService } from "../permissions/organization-permission.service.js";
 import type { ProjectMemberRepository } from "../project-members/project-member.repository.js";
 import type { ProjectRepository } from "./project.repository.js";
 import type { RoleAssignmentRepository } from "../role-assignments/role-assignment.repository.js";
@@ -12,7 +13,9 @@ import type {
   UpdateProjectInput,
 } from "./project.types.js";
 
-import type { ProjectMemberRole } from "../project-members/project-member.types.js";
+type ProjectManagementPermission =
+  | "project.update"
+  | "project.change_status";
 
 export interface CreateProjectCommand {
   organizationId: string;
@@ -20,17 +23,13 @@ export interface CreateProjectCommand {
   description?: string | null;
 }
 
-const PROJECT_MANAGER_ROLES: ProjectMemberRole[] = [
-  "project_owner",
-  "project_manager",
-];
-
 export class ProjectService {
   constructor(
     private readonly projectRepository: ProjectRepository,
     private readonly projectMemberRepository: ProjectMemberRepository,
     private readonly organizationMemberRepository: OrganizationMemberRepository,
     private readonly roleAssignmentRepository: RoleAssignmentRepository,
+    private readonly organizationPermissionService: OrganizationPermissionService,
     private readonly transactionManager: TransactionManager
   ) {}
 
@@ -52,11 +51,15 @@ export class ProjectService {
           !organizationMember ||
           organizationMember.status !== "active"
         ) {
-          throw new AppError(
-            "Organization not found or you do not have access.",
-            404
-          );
+          throw this.organizationNotFoundError();
         }
+
+        await this.organizationPermissionService.assertPermission(
+          input.organizationId,
+          userId,
+          "project.create",
+          client
+        );
 
         const project = await this.projectRepository.create(
           {
@@ -121,11 +124,7 @@ export class ProjectService {
           throw this.projectNotFoundError();
         }
 
-        await this.assertCanViewProject(
-          project,
-          userId,
-          client
-        );
+        await this.assertCanViewProject(project, userId, client);
 
         return project;
       }
@@ -152,6 +151,7 @@ export class ProjectService {
         await this.assertCanManageProject(
           project,
           userId,
+          "project.update",
           client
         );
 
@@ -192,6 +192,7 @@ export class ProjectService {
         await this.assertCanManageProject(
           project,
           userId,
+          "project.change_status",
           client
         );
 
@@ -217,38 +218,34 @@ export class ProjectService {
     userId: string,
     client: import("pg").PoolClient
   ): Promise<void> {
-    const organizationMember =
-      await this.organizationMemberRepository.findByOrganizationAndUser(
+    await this.assertActiveOrganizationMembership(
+      project.organizationId,
+      userId,
+      client
+    );
+
+    const canViewOrganizationProjects =
+      await this.organizationPermissionService.hasPermission(
         project.organizationId,
         userId,
+        "organization.projects.view",
         client
       );
 
-    if (
-      !organizationMember ||
-      organizationMember.status !== "active"
-    ) {
-      throw this.projectNotFoundError();
-    }
-
-    if (
-      organizationMember.role === "owner" ||
-      organizationMember.role === "admin"
-    ) {
+    if (canViewOrganizationProjects) {
       return;
     }
 
-    const projectMember =
-      await this.projectMemberRepository.findByProjectAndUser(
+    const canViewProject =
+      await this.organizationPermissionService.hasProjectPermission(
+        project.organizationId,
         project.id,
         userId,
+        "project.view",
         client
       );
 
-    if (
-      !projectMember ||
-      projectMember.status !== "active"
-    ) {
+    if (!canViewProject) {
       throw this.projectNotFoundError();
     }
   }
@@ -256,46 +253,66 @@ export class ProjectService {
   private async assertCanManageProject(
     project: Project,
     userId: string,
+    permission: ProjectManagementPermission,
     client: import("pg").PoolClient
   ): Promise<void> {
-    const organizationMember =
-      await this.organizationMemberRepository.findByOrganizationAndUser(
+    await this.assertActiveOrganizationMembership(
+      project.organizationId,
+      userId,
+      client
+    );
+
+    const canManageOrganizationProjects =
+      await this.organizationPermissionService.hasPermission(
         project.organizationId,
         userId,
+        "organization.projects.manage",
         client
       );
 
-    if (
-      !organizationMember ||
-      organizationMember.status !== "active"
-    ) {
-      throw this.projectNotFoundError();
-    }
-
-    if (
-      organizationMember.role === "owner" ||
-      organizationMember.role === "admin"
-    ) {
+    if (canManageOrganizationProjects) {
       return;
     }
 
-    const projectMember =
-      await this.projectMemberRepository.findByProjectAndUser(
+    const canManageProject =
+      await this.organizationPermissionService.hasProjectPermission(
+        project.organizationId,
         project.id,
+        userId,
+        permission,
+        client
+      );
+
+    if (!canManageProject) {
+      throw new AppError(
+        "You do not have permission to perform this action on the project.",
+        403
+      );
+    }
+  }
+
+  private async assertActiveOrganizationMembership(
+    organizationId: string,
+    userId: string,
+    client: import("pg").PoolClient
+  ): Promise<void> {
+    const member =
+      await this.organizationMemberRepository.findByOrganizationAndUser(
+        organizationId,
         userId,
         client
       );
 
-    if (
-      !projectMember ||
-      projectMember.status !== "active" ||
-      !PROJECT_MANAGER_ROLES.includes(projectMember.role)
-    ) {
-      throw new AppError(
-        "You do not have permission to manage this project.",
-        403
-      );
+    if (!member || member.status !== "active") {
+      throw this.projectNotFoundError();
     }
+  }
+
+  private organizationNotFoundError(): AppError {
+    return new AppError(
+      "Organization not found or you do not have access.",
+      404
+    );
   }
 
   private projectNotFoundError(): AppError {

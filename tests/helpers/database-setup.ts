@@ -1,3 +1,4 @@
+import { env } from "../../src/config/env.js";
 import { testPool } from "../../src/config/test-database.js";
 import { runMigrations } from "../../src/database/migration.runner.js";
 
@@ -6,7 +7,7 @@ export const setupTestDatabase = async (): Promise<void> => {
     database_name: string;
   }>("SELECT current_database() AS database_name");
 
-  if (result.rows[0]?.database_name !== process.env.DB_TEST_NAME) {
+  if (result.rows[0]?.database_name !== env.DB_TEST_NAME) {
     throw new Error(
       "Refusing to run test migrations against an unexpected database."
     );
@@ -29,9 +30,15 @@ export const clearTestDatabase = async (): Promise<void> => {
 // Preserve platform-level roles, permissions, and role-permission mappings.
 export const clearIdentityTestDatabase = async (): Promise<void> => {
   const client = await testPool.connect();
+  let releaseError: Error | undefined;
 
   try {
     await client.query("BEGIN");
+
+    // Conversations reference users, organizations, and projects.
+    // Remove conversation data before deleting identity records.
+    await client.query("DELETE FROM conversation_messages");
+    await client.query("DELETE FROM conversations");
 
     await client.query("DELETE FROM invitations");
     await client.query("DELETE FROM project_member_roles");
@@ -53,9 +60,17 @@ export const clearIdentityTestDatabase = async (): Promise<void> => {
 
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      releaseError =
+        rollbackError instanceof Error
+          ? rollbackError
+          : new Error("Database cleanup rollback failed.");
+    }
+
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 };

@@ -9,6 +9,7 @@ import agentRouter from "./routes/agent.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import projectRouter from "./routes/project.routes.js";
 import organizationRouter from "./routes/organization.routes.js";
+import { invitationRouter } from "./routes/invitation.routes.js";
 
 import { errorMiddleware } from "./middleware/error.middleware.js";
 import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
@@ -70,6 +71,8 @@ export const createApp = () => {
   app.use("/api/projects", projectRouter);
 
   app.use("/api/organizations", organizationRouter);
+
+  app.use("/api", invitationRouter);
 
   app.use("/api/agent", agentRouter);
 

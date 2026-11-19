@@ -135,6 +135,33 @@ export class PostgresProjectRepository implements ProjectRepository {
     return row ? this.mapProject(row) : undefined;
   }
 
+  async lockById(
+    id: string,
+    client: PoolClient
+  ): Promise<Project | undefined> {
+    const result = await client.query<ProjectRow>(
+      `
+      SELECT
+        id,
+        organization_id,
+        name,
+        description,
+        status,
+        created_by,
+        created_at,
+        updated_at
+      FROM projects
+      WHERE id = $1
+      FOR UPDATE
+    `,
+      [id]
+    );
+
+    const row = result.rows[0];
+
+    return row ? this.mapProject(row) : undefined;
+  }
+
   async findByIdAndOrganization(
     id: string,
     organizationId: string,
@@ -168,45 +195,64 @@ export class PostgresProjectRepository implements ProjectRepository {
     organizationId?: string,
     client?: PoolClient
   ): Promise<Project[]> {
-    const values: unknown[] = [userId];
-    let organizationFilter = "";
-
-    if (organizationId) {
-      values.push(organizationId);
-      organizationFilter = `AND p.organization_id = $2`;
-    }
-
     const result = await this.execute<ProjectRow>(
       "findAccessibleProjectsByUser",
       client,
-      `SELECT
-        p.id,
-        p.organization_id,
-        p.name,
-        p.description,
-        p.status,
-        p.created_by,
-        p.created_at,
-        p.updated_at
-      FROM projects p
-      INNER JOIN organization_members om
-        ON om.organization_id = p.organization_id
-       AND om.user_id = $1
-       AND om.status = 'active'
-      WHERE (
-        om.role IN ('owner', 'admin')
-        OR EXISTS (
-          SELECT 1
-          FROM project_members pm
-          WHERE pm.project_id = p.id
-            AND pm.organization_id = p.organization_id
-            AND pm.user_id = $1
-            AND pm.status = 'active'
+      `
+        SELECT DISTINCT
+          p.id,
+          p.organization_id,
+          p.name,
+          p.description,
+          p.status,
+          p.created_by,
+          p.created_at,
+          p.updated_at
+        FROM projects p
+        INNER JOIN organization_members om
+          ON om.organization_id = p.organization_id
+        AND om.user_id = $1
+        AND om.status = 'active'
+        WHERE (
+          EXISTS (
+            SELECT 1
+            FROM organization_member_roles omr
+            INNER JOIN roles r
+              ON r.id = omr.role_id
+            INNER JOIN role_permissions rp
+              ON rp.role_id = r.id
+            INNER JOIN permissions perm
+              ON perm.id = rp.permission_id
+            WHERE omr.organization_id = p.organization_id
+              AND omr.user_id = $1
+              AND r.scope = 'organization'
+              AND perm.key = 'organization.projects.view'
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM project_members pm
+            INNER JOIN project_member_roles pmr
+              ON pmr.project_id = pm.project_id
+            AND pmr.organization_id = pm.organization_id
+            AND pmr.user_id = pm.user_id
+            INNER JOIN roles r
+              ON r.id = pmr.role_id
+            INNER JOIN role_permissions rp
+              ON rp.role_id = r.id
+            INNER JOIN permissions perm
+              ON perm.id = rp.permission_id
+            WHERE pm.project_id = p.id
+              AND pm.organization_id = p.organization_id
+              AND pm.user_id = $1
+              AND pm.status = 'active'
+              AND r.scope = 'project'
+              AND perm.key = 'project.view'
+          )
         )
-      )
-      ${organizationFilter}
-      ORDER BY p.created_at DESC, p.id ASC`,
-      values
+        AND ($2::uuid IS NULL OR p.organization_id = $2)
+        ORDER BY p.created_at DESC, p.id ASC
+      `,
+      [userId, organizationId ?? null]
     );
 
     return result.rows.map((row) => this.mapProject(row));

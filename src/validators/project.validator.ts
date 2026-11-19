@@ -77,3 +77,72 @@ export const updateProjectStatusSchema = z
     status: projectStatusSchema,
   })
   .strict();
+
+const manageableProjectMemberRoleSchema = z.enum([
+  "client",
+  "stakeholder",
+  "project_manager",
+  "technical_lead",
+  "developer",
+  "qa_engineer",
+  "viewer",
+]);
+
+const projectMemberStatusSchema = z.enum([
+  "active",
+  "suspended",
+]);
+
+export const projectMemberParamsSchema = z
+  .object({
+    projectId: z
+      .string()
+      .uuid("Project ID must be a valid UUID."),
+    userId: z
+      .string()
+      .uuid("User ID must be a valid UUID."),
+  })
+  .strict();
+
+export const projectMemberCustomRoleParamsSchema = z
+  .object({
+    projectId: z
+      .string()
+      .uuid("Project ID must be a valid UUID."),
+    userId: z
+      .string()
+      .uuid("User ID must be a valid UUID."),
+    roleId: z
+      .string()
+      .uuid("Role ID must be a valid UUID."),
+  })
+  .strict();
+
+export const addProjectMemberSchema = z
+  .object({
+    userId: z
+      .string()
+      .uuid("User ID must be a valid UUID."),
+    role: manageableProjectMemberRoleSchema,
+  })
+  .strict();
+
+export const updateProjectMemberRoleSchema = z
+  .object({
+    role: manageableProjectMemberRoleSchema,
+  })
+  .strict();
+
+export const updateProjectMemberStatusSchema = z
+  .object({
+    status: projectMemberStatusSchema,
+  })
+  .strict();
+
+export const transferProjectOwnershipSchema = z
+  .object({
+    newOwnerUserId: z
+      .string()
+      .uuid("New owner user ID must be a valid UUID."),
+  })
+  .strict();

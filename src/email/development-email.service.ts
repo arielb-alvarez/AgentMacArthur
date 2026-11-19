@@ -3,6 +3,7 @@ import { logger } from "../utils/logger.js";
 
 import type {
   EmailService,
+  InvitationEmail,
   VerificationEmail,
 } from "./email.service.js";
 
@@ -23,7 +24,18 @@ export class DevelopmentEmailService implements EmailService {
     logger.info("Development verification email generated", {
       to: email.to,
       displayName: email.displayName,
-      verificationUrl: email.verificationUrl,
+      expiresAt: email.expiresAt,
+    });
+  }
+
+  async sendInvitationEmail(
+    email: InvitationEmail
+  ): Promise<void> {
+    logger.info("Development invitation email generated", {
+      to: email.to,
+      organizationName: email.organizationName,
+      inviterDisplayName: email.inviterDisplayName,
+      roleName: email.roleName,
       expiresAt: email.expiresAt,
     });
   }

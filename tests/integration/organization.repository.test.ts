@@ -127,6 +127,84 @@ describe("PostgresOrganizationRepository", () => {
     expect(organization?.ownerUserId).toBe(user.id);
   });
 
+  it("should find and lock an organization within a transaction", async () => {
+    const user = await createOwner();
+    const created = await createPersonalOrganization(user.id);
+
+    const client = await testPool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const organization = await repository.findByIdForUpdate(
+        created.id,
+        client
+      );
+
+      expect(organization?.id).toBe(created.id);
+      expect(organization?.ownerUserId).toBe(user.id);
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+
+  it("should update an organization's owner within a transaction", async () => {
+    const previousOwner = await createOwner();
+
+    const organization = await createPersonalOrganization(
+      previousOwner.id
+    );
+
+    const newOwner = await userRepository.create({
+      email: "new-owner@example.com",
+      passwordHash: "test-password-hash",
+      displayName: "New Owner",
+    });
+
+    const client = await testPool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // The deferred owner-membership foreign key requires
+      // the incoming owner to have a membership row.
+      await client.query(
+        `INSERT INTO organization_members (
+          organization_id,
+          user_id,
+          role,
+          status
+        )
+        VALUES ($1, $2, 'member', 'active')`,
+        [organization.id, newOwner.id]
+      );
+
+      const updated = await repository.updateOwner(
+        organization.id,
+        newOwner.id,
+        client
+      );
+
+      expect(updated?.id).toBe(organization.id);
+      expect(updated?.ownerUserId).toBe(newOwner.id);
+      expect(updated?.updatedAt.getTime()).toBeGreaterThanOrEqual(
+        organization.updatedAt.getTime()
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+
   it("should return undefined for an unknown organization ID", async () => {
     const organization = await repository.findById(
       "00000000-0000-4000-8000-000000000001"

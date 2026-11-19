@@ -17,6 +17,17 @@ export interface OrganizationRepository {
     client?: PoolClient
   ): Promise<Organization | undefined>;
 
+  findByIdForUpdate(
+    id: string,
+    client: PoolClient
+  ): Promise<Organization | undefined>;
+
+  updateOwner(
+    id: string,
+    ownerUserId: string,
+    client: PoolClient
+  ): Promise<Organization | undefined>;
+
   findBySlug(
     slug: string,
     client?: PoolClient

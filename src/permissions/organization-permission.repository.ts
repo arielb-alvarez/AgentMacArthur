@@ -7,4 +7,12 @@ export interface OrganizationPermissionRepository {
     permissionKey: string,
     client?: PoolClient
   ): Promise<boolean>;
+
+  hasProjectPermission(
+    organizationId: string,
+    projectId: string,
+    userId: string,
+    permissionKey: string,
+    client?: PoolClient
+  ): Promise<boolean>;
 }

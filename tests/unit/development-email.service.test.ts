@@ -26,7 +26,7 @@ describe("DevelopmentEmailService", () => {
     service = new DevelopmentEmailService("development");
   });
 
-  it("should log the verification email details", async () => {
+  it("should log verification email metadata without exposing the URL", async () => {
     const loggerSpy = vi.spyOn(logger, "info");
 
     await service.sendVerificationEmail(email);
@@ -36,13 +36,16 @@ describe("DevelopmentEmailService", () => {
       {
         to: email.to,
         displayName: email.displayName,
-        verificationUrl: email.verificationUrl,
         expiresAt: email.expiresAt,
       }
     );
+
+    expect(JSON.stringify(loggerSpy.mock.calls)).not.toContain(
+      email.verificationUrl
+    );
   });
 
-  it("should not log anything other than the verification email", async () => {
+  it("should log only once when generating a verification email", async () => {
     const loggerSpy = vi.spyOn(logger, "info");
 
     await service.sendVerificationEmail(email);

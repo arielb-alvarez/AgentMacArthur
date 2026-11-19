@@ -1,13 +1,30 @@
-
 import type { AgentProvider } from "./agent-provider.js";
-import type { ConversationService } from "../conversations/conversation.service.js";
+import type {
+  ConversationService,
+  StartConversationInput,
+} from "../conversations/conversation.service.js";
 import type { ConversationMessage } from "../conversations/conversation.types.js";
-import { AppError } from "../errors/app.error.js";
 
-export interface ChatCommand {
-  message: string;
-  conversationId?: string;
-}
+export type ChatCommand =
+  | {
+      message: string;
+      conversationId: string;
+    }
+  | {
+      message: string;
+      scope: "personal";
+    }
+  | {
+      message: string;
+      scope: "organization";
+      organizationId: string;
+    }
+  | {
+      message: string;
+      scope: "project";
+      organizationId: string;
+      projectId: string;
+    };
 
 export interface ChatResult {
   conversationId: string;
@@ -20,45 +37,64 @@ export class AgentChatService {
     private readonly conversationService: ConversationService
   ) {}
 
-  async chat(command: ChatCommand): Promise<ChatResult> {
-    let conversation;
+  async chat(
+    userId: string,
+    command: ChatCommand
+  ): Promise<ChatResult> {
+    let conversationInput: StartConversationInput;
 
-    if (command.conversationId) {
-      conversation = await this.conversationService.getConversation(
-        command.conversationId
-      );
-
-      if (!conversation) {
-        throw new AppError("Conversation not found.", 404);
-      }
+    if ("conversationId" in command) {
+      conversationInput = {
+        conversationId: command.conversationId,
+      };
+    } else if (command.scope === "personal") {
+      conversationInput = {
+        createdBy: userId,
+        scope: "personal",
+      };
+    } else if (command.scope === "organization") {
+      conversationInput = {
+        createdBy: userId,
+        scope: "organization",
+        organizationId: command.organizationId,
+      };
     } else {
-      conversation = await this.conversationService.createConversation();
+      conversationInput = {
+        createdBy: userId,
+        scope: "project",
+        organizationId: command.organizationId,
+        projectId: command.projectId,
+      };
     }
 
-    const updatedConversation =
-      await this.conversationService.addMessage(conversation.id, {
-        role: "user",
-        content: command.message,
-      });
+    const userMessage: ConversationMessage = {
+      role: "user",
+      content: command.message,
+    };
 
-    if (!updatedConversation) {
-      throw new AppError("Conversation could not be updated.", 500);
-    }
+    // The user message is authorized and persisted transactionally.
+    const conversation = await this.conversationService.startTurn(
+      userId,
+      conversationInput,
+      userMessage
+    );
 
+    // AI generation happens outside the database transaction.
     const messages: ConversationMessage[] =
-      updatedConversation.messages.map((item) => ({ ...item }));
+      conversation.messages.map((item) => ({ ...item }));
 
-    const response = await this.agentProvider.generateChatResponse(messages);
+    const response =
+      await this.agentProvider.generateChatResponse(messages);
 
-    const completedConversation =
-      await this.conversationService.addMessage(conversation.id, {
+    // Access is rechecked before the assistant response is persisted.
+    await this.conversationService.completeTurn(
+      conversation.id,
+      userId,
+      {
         role: "assistant",
         content: response,
-      });
-
-    if (!completedConversation) {
-      throw new AppError("Conversation could not be updated.", 500);
-    }
+      }
+    );
 
     return {
       conversationId: conversation.id,
