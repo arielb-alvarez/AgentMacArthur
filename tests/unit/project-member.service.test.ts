@@ -277,6 +277,33 @@ describe("ProjectMemberService", () => {
 
       expect(mocks.createMember).not.toHaveBeenCalled();
     });
+
+    it("should reject users with suspended organization membership", async () => {
+      mocks.findOrganizationMember.mockImplementation(
+        async (_organizationId: string, userId: string) => {
+          if (userId === "new-user") {
+            return {
+              ...activeOrganizationMember,
+              userId,
+              status: "suspended",
+            };
+          }
+
+          return activeOrganizationMember;
+        }
+      );
+
+      await expect(
+        service.add(projectId, managerId, {
+          userId: "new-user",
+          role: "developer",
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+      });
+
+      expect(mocks.createMember).not.toHaveBeenCalled();
+    });
   });
 
   describe("updateRole", () => {
@@ -369,6 +396,34 @@ describe("ProjectMemberService", () => {
         mocks.replaceProjectPrimaryRole
       ).toHaveBeenCalledOnce();
     });
+
+    it("should return the existing member when the requested role is unchanged", async () => {
+      const result = await service.updateRole(
+        projectId,
+        managerId,
+        developerId,
+        "developer"
+      );
+
+      expect(result).toEqual(developer);
+      expect(mocks.replaceProjectPrimaryRole).not.toHaveBeenCalled();
+      expect(mocks.updateRole).not.toHaveBeenCalled();
+    });
+
+    it("should reject when the member disappears during a role update", async () => {
+      mocks.updateRole.mockResolvedValue(undefined);
+
+      await expect(
+        service.updateRole(
+          projectId,
+          managerId,
+          developerId,
+          "technical_lead"
+        )
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    });
   });
 
   describe("updateStatus", () => {
@@ -422,6 +477,21 @@ describe("ProjectMemberService", () => {
 
       expect(mocks.updateStatus).not.toHaveBeenCalled();
     });
+
+    it("should reject when the member disappears during a status update", async () => {
+      mocks.updateStatus.mockResolvedValue(undefined);
+
+      await expect(
+        service.updateStatus(
+          projectId,
+          managerId,
+          developerId,
+          "suspended"
+        )
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    });
   });
 
   describe("remove", () => {
@@ -455,6 +525,16 @@ describe("ProjectMemberService", () => {
       });
 
       expect(mocks.deleteMember).not.toHaveBeenCalled();
+    });
+
+    it("should reject when the member cannot be deleted", async () => {
+      mocks.deleteMember.mockResolvedValue(false);
+
+      await expect(
+        service.remove(projectId, managerId, developerId)
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      });
     });
   });
 

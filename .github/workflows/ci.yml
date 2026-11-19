@@ -38,6 +38,7 @@ jobs:
       DB_PASSWORD: ci_test_password
       DB_NAME: agentmacarthur
       DB_TEST_NAME: agentmacarthur_test
+      DB_MIGRATION_TEST_NAME: agentmacarthur_migration_test
 
     steps:
       - name: Checkout repository
@@ -54,6 +55,11 @@ jobs:
 
       - name: Create test database
         run: createdb --host localhost --username postgres agentmacarthur_test
+        env:
+          PGPASSWORD: ci_test_password
+
+      - name: Create migration test database
+        run: createdb --host localhost --username postgres agentmacarthur_migration_test
         env:
           PGPASSWORD: ci_test_password
 

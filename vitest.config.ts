@@ -20,6 +20,7 @@ export default defineConfig({
 
         // Test-only infrastructure.
         "src/config/test-database.ts",
+        "src/config/migration-test-database.ts",
 
         // Type-only contracts and definitions.
         "src/auth-tokens/auth-token.repository.ts",
